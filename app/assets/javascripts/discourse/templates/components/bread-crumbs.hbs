@@ -4,6 +4,10 @@
   {{category-drop category=secondCategory parentCategory=firstCategory categories=childCategories subCategory="true" noSubcategories=noSubcategories}}
 {{/if}}
 
-{{plugin-outlet "bread-crumbs-right" tagName="li"}}
+{{#if siteSettings.tagging_enabled}}
+  {{tag-drop firstCategory=firstCategory secondCategory=secondCategory tagId=tagId}}
+{{/if}}
+
+{{plugin-outlet name="bread-crumbs-right" connectorTagName="li"}}
 
 <div class='clear'></div>

@@ -8,13 +8,11 @@
 id:
   js:
     poll:
+      voters:
+        other: "pemilih"
+      total_votes:
+        other: "jumlah suara"
       average_rating: "Rata-rata rating: <strong>%{average}</strong>."
-      multiple:
-        help:
-          at_least_min_options: "Kamu wajib memilih setidaknya <strong>%{count}</strong> pilihan."
-          up_to_max_options: "Kamu boleh memilih maksimum <strong>%{count}</strong> pilihan."
-          x_options: "Kamu harus memilih <strong>%{count}</strong> pilihan."
-          between_min_and_max_options: "Kamu hanya bisa memilih minimum <strong>%{min}</strong> pilihan dan maximum <strong>%{max}</strong> pilihan."
       cast-votes:
         title: "Gunakan suaramu"
         label: "Pilih sekarang!"
@@ -24,3 +22,11 @@ id:
       hide-results:
         title: "Kembali ke suaramu"
         label: "Sembunyikan hasil"
+      open:
+        title: "Buka Polling"
+        label: "Buka"
+        confirm: "Apakah Anda yakin  ingin membuka akun ini?"
+      close:
+        title: "Tutup polling"
+        label: "Tutup"
+        confirm: "Apakah Anda yakin  ingin menutup akun ini?"

@@ -1,4 +1,5 @@
 import { buildCategoryPanel } from 'discourse/components/edit-category-panel';
+import PermissionType from 'discourse/models/permission-type';
 
 export default buildCategoryPanel('security', {
   editingPermissions: false,
@@ -7,16 +8,24 @@ export default buildCategoryPanel('security', {
 
   actions: {
     editPermissions() {
-      this.set('editingPermissions', true);
+      if (!this.get('category.is_special')) {
+        this.set('editingPermissions', true);
+      }
     },
 
     addPermission(group, id) {
-      this.get('category').addPermission({group_name: group + "",
-                                       permission: Discourse.PermissionType.create({id})});
+      if (!this.get('category.is_special')) {
+        this.get('category').addPermission({
+          group_name: group + "",
+          permission: PermissionType.create({ id: parseInt(id) })
+        });
+      }
     },
 
     removePermission(permission) {
-      this.get('category').removePermission(permission);
+      if (!this.get('category.is_special')) {
+        this.get('category').removePermission(permission);
+      }
     },
   }
 });

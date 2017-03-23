@@ -18,6 +18,7 @@
       }
       .description, .hint {
         color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+        display: block;
       }
       .hint {
         font-style: italic;
@@ -37,6 +38,6 @@
 .image-upload-controls {
   padding: 10px;
   label.btn {
-    padding: 7px 10px 5px 10px;
+    padding: 6px 10px;
   }
 }

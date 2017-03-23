@@ -1,3 +1,4 @@
+import { ajax } from 'discourse/lib/ajax';
 import round from "discourse/lib/round";
 import { fmt } from 'discourse/lib/computed';
 
@@ -80,7 +81,8 @@ const Report = Discourse.Model.extend({
     switch (this.get("type")) {
       case "flags": return "flag";
       case "likes": return "heart";
-      default:      return null;
+      case "bookmarks": return "bookmark";
+      default: return null;
     }
   }.property("type"),
 
@@ -131,12 +133,13 @@ const Report = Discourse.Model.extend({
 
 Report.reopenClass({
 
-  find(type, startDate, endDate, categoryId) {
-    return Discourse.ajax("/admin/reports/" + type, {
+  find(type, startDate, endDate, categoryId, groupId) {
+    return ajax("/admin/reports/" + type, {
       data: {
         start_date: startDate,
         end_date: endDate,
-        category_id: categoryId
+        category_id: categoryId,
+        group_id: groupId
       }
     }).then(json => {
       // Add a percent field to each tuple
@@ -147,7 +150,7 @@ Report.reopenClass({
       if (maxY > 0) {
         json.report.data.forEach(row => row.percentage = Math.round((row.y / maxY) * 100));
       }
-      const model = Discourse.Report.create({ type: type });
+      const model = Report.create({ type: type });
       model.setProperties(json.report);
       return model;
     });

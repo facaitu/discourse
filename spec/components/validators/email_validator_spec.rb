@@ -1,8 +1,8 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe EmailValidator do
 
-  let(:record) {  }
+  let(:record) { }
   let(:validator) { described_class.new({attributes: :email}) }
   subject(:validate) { validator.validate_each(record,:email,record.email) }
 
@@ -25,10 +25,22 @@ describe EmailValidator do
 
     it "blocks based on email_domains_blacklist" do
       SiteSetting.email_domains_blacklist = "email.com|mail.com|e-mail.com"
-      expect(blocks?('sam@email.com')).to           eq(true)
-      expect(blocks?('sam@bob.email.com')).to       eq(true)
-      expect(blocks?('sam@e-mail.com')).to          eq(true)
-      expect(blocks?('sam@googlemail.com')).to      eq(false)
+      expect(blocks?('sam@email.com')).to eq(true)
+      expect(blocks?('sam@bob.email.com')).to eq(true)
+      expect(blocks?('sam@e-mail.com')).to eq(true)
+      expect(blocks?('sam@googlemail.com')).to eq(false)
+    end
+  end
+
+  context '.email_regex' do
+    it 'should match valid emails' do
+      expect(!!('test@discourse.org' =~ EmailValidator.email_regex)).to eq(true)
+    end
+
+    it 'should not match invalid emails' do
+      ['testdiscourse.org', 'test@discourse.org; a@discourse.org', 'random'].each do |email|
+        expect(!!(email =~ EmailValidator.email_regex)).to eq(false)
+      end
     end
   end
 

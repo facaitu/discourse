@@ -15,18 +15,21 @@ class BasicCategorySerializer < ApplicationSerializer
              :permission,
              :parent_category_id,
              :notification_level,
-             :logo_url,
-             :background_url,
              :can_edit,
              :topic_template,
-             :has_children
+             :has_children,
+             :sort_order,
+             :sort_ascending
+
+  has_one :uploaded_logo, embed: :object, serializer: CategoryUploadSerializer
+  has_one :uploaded_background, embed: :object, serializer: CategoryUploadSerializer
 
   def include_parent_category_id?
     parent_category_id
   end
 
   def description
-    object.uncategorized? ? SiteSetting.uncategorized_description : object.description
+    object.uncategorized? ? I18n.t('category.uncategorized_description') : object.description
   end
 
   def can_edit
@@ -37,4 +40,7 @@ class BasicCategorySerializer < ApplicationSerializer
     scope && scope.can_edit?(object)
   end
 
+  def notification_level
+    object.notification_level
+  end
 end

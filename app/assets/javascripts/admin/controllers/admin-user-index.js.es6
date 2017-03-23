@@ -1,3 +1,4 @@
+import { ajax } from 'discourse/lib/ajax';
 import CanCheckEmails from 'discourse/mixins/can-check-emails';
 import { propertyNotEqual, setting } from 'discourse/lib/computed';
 
@@ -5,6 +6,7 @@ export default Ember.Controller.extend(CanCheckEmails, {
   editingTitle: false,
   originalPrimaryGroupId: null,
   availableGroups: null,
+  userTitleValue: null,
 
   showApproval: setting('must_approve_users'),
   showBadges: setting('enable_badges'),
@@ -26,23 +28,48 @@ export default Ember.Controller.extend(CanCheckEmails, {
       });
     }
     return [];
-  }.property('model.user_fields.@each'),
+  }.property('model.user_fields.[]'),
 
   actions: {
+
+    impersonate() { return this.get("model").impersonate(); },
+    logOut() { return this.get("model").logOut(); },
+    resetBounceScore() { return this.get("model").resetBounceScore(); },
+    refreshBrowsers() { return this.get("model").refreshBrowsers(); },
+    approve() { return this.get("model").approve(); },
+    deactivate() { return this.get("model").deactivate(); },
+    sendActivationEmail() { return this.get("model").sendActivationEmail(); },
+    activate() { return this.get("model").activate(); },
+    revokeAdmin() { return this.get("model").revokeAdmin(); },
+    grantAdmin() { return this.get("model").grantAdmin(); },
+    revokeModeration() { return this.get("model").revokeModeration(); },
+    grantModeration() { return this.get("model").grantModeration(); },
+    saveTrustLevel() { return this.get("model").saveTrustLevel(); },
+    restoreTrustLevel() { return this.get("model").restoreTrustLevel(); },
+    lockTrustLevel(locked) { return this.get("model").lockTrustLevel(locked); },
+    unsuspend() { return this.get("model").unsuspend(); },
+    unblock() { return this.get("model").unblock(); },
+    block() { return this.get("model").block(); },
+    deleteAllPosts() { return this.get("model").deleteAllPosts(); },
+    anonymize() { return this.get('model').anonymize(); },
+    destroy() { return this.get('model').destroy(); },
+
     toggleTitleEdit() {
+      this.set('userTitleValue', this.get('model.title'));
       this.toggleProperty('editingTitle');
     },
 
     saveTitle() {
       const self = this;
 
-      return Discourse.ajax("/users/" + this.get('model.username').toLowerCase(), {
-        data: {title: this.get('model.title')},
+      return ajax(`/users/${this.get('model.username').toLowerCase()}.json`, {
+        data: {title: this.get('userTitleValue')},
         type: 'PUT'
       }).catch(function(e) {
         bootbox.alert(I18n.t("generic_error_with_reason", {error: "http: " + e.status + " - " + e.body}));
       }).finally(function() {
-        self.send('toggleTitleEdit');
+        self.set('model.title', self.get('userTitleValue'));
+        self.toggleProperty('editingTitle');
       });
     },
 
@@ -65,7 +92,7 @@ export default Ember.Controller.extend(CanCheckEmails, {
     savePrimaryGroup() {
       const self = this;
 
-      return Discourse.ajax("/admin/users/" + this.get('model.id') + "/primary_group", {
+      return ajax("/admin/users/" + this.get('model.id') + "/primary_group", {
         type: 'PUT',
         data: {primary_group_id: this.get('model.primary_group_id')}
       }).then(function () {
@@ -103,14 +130,6 @@ export default Ember.Controller.extend(CanCheckEmails, {
           if (result) { self.get('model').revokeApiKey(); }
         }
       );
-    },
-
-    anonymize() {
-      this.get('model').anonymize();
-    },
-
-    destroy() {
-      this.get('model').destroy();
     }
   }
 

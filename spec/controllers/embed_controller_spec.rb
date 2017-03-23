@@ -1,18 +1,19 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe EmbedController do
 
   let(:host) { "eviltrout.com" }
   let(:embed_url) { "http://eviltrout.com/2013/02/10/why-discourse-uses-emberjs.html" }
+  let(:discourse_username) { "eviltrout" }
 
   it "is 404 without an embed_url" do
     get :comments
-    expect(response).not_to be_success
+    expect(response).to render_template :embed_error
   end
 
   it "raises an error with a missing host" do
     get :comments, embed_url: embed_url
-    expect(response).not_to be_success
+    expect(response).to render_template :embed_error
   end
 
   context "by topic id" do
@@ -29,12 +30,46 @@ describe EmbedController do
     end
   end
 
+  context ".info" do
+    context "without api key" do
+      it "fails" do
+        get :info, format: :json
+        expect(response).to render_template :embed_error
+      end
+    end
+
+    context "with api key" do
+
+      let(:api_key) { ApiKey.create_master_key }
+
+      context "with valid embed url" do
+        let(:topic_embed) { Fabricate(:topic_embed, embed_url: embed_url) }
+
+        it "returns information about the topic" do
+          get :info, format: :json, embed_url: topic_embed.embed_url, api_key: api_key.key, api_username: "system"
+          json = JSON.parse(response.body)
+          expect(json['topic_id']).to eq(topic_embed.topic.id)
+          expect(json['post_id']).to eq(topic_embed.post.id)
+          expect(json['topic_slug']).to eq(topic_embed.topic.slug)
+        end
+      end
+
+      context "without invalid embed url" do
+        it "returns error response" do
+          get :info, format: :json, embed_url: "http://nope.com", api_key: api_key.key, api_username: "system"
+          json = JSON.parse(response.body)
+          expect(json["error_type"]).to eq("not_found")
+        end
+      end
+    end
+  end
+
   context "with a host" do
     let!(:embeddable_host) { Fabricate(:embeddable_host) }
 
     it "raises an error with no referer" do
       get :comments, embed_url: embed_url
-      expect(response).not_to be_success
+      expect(response).to render_template :embed_error
     end
 
     context "success" do
@@ -57,9 +92,15 @@ describe EmbedController do
 
       it "creates a topic view when a topic_id is found" do
         TopicEmbed.expects(:topic_id_for_embed).returns(123)
-        TopicView.expects(:new).with(123, nil, {limit: 100, exclude_first: true, exclude_deleted_users: true})
+        TopicView.expects(:new).with(123, nil, {limit: 100, exclude_first: true, exclude_deleted_users: true, exclude_hidden: true})
         get :comments, embed_url: embed_url
       end
+
+      it "provides the topic retriever with the discourse username when provided" do
+        TopicRetriever.expects(:new).with(embed_url, has_entry({author_username: discourse_username}))
+        get :comments, embed_url: embed_url, discourse_username: discourse_username
+      end
+
     end
   end
 
@@ -92,7 +133,7 @@ describe EmbedController do
       it "doesn't work with a made up host" do
         controller.request.stubs(:referer).returns("http://codinghorror.com/invalid-url")
         get :comments, embed_url: embed_url
-        expect(response).to_not be_success
+        expect(response).to render_template :embed_error
       end
     end
   end

@@ -21,18 +21,19 @@ module SiteSettingExtension
   end
 
   def types
-    @types ||= Enum.new(:string,
-                        :time,
-                        :fixnum,
-                        :float,
-                        :bool,
-                        :null,
-                        :enum,
-                        :list,
-                        :url_list,
-                        :host_list,
-                        :category_list,
-                        :value_list)
+    @types ||= Enum.new(string: 1,
+                        time: 2,
+                        fixnum: 3,
+                        float: 4,
+                        bool: 5,
+                        null: 6,
+                        enum: 7,
+                        list: 8,
+                        url_list: 9,
+                        host_list: 10,
+                        category_list: 11,
+                        value_list: 12,
+                        regex: 13)
   end
 
   def mutex
@@ -102,9 +103,7 @@ module SiteSettingExtension
 
       if new_choices = opts[:choices]
 
-        if String === new_choices
-          new_choices = eval(new_choices)
-        end
+        new_choices = eval(new_choices) if new_choices.is_a?(String)
 
         choices.has_key?(name) ?
           choices[name].concat(new_choices) :
@@ -119,13 +118,14 @@ module SiteSettingExtension
         hidden_settings << name
       end
 
-      # You can "shadow" a site setting with a GlobalSetting. If the GlobalSetting
-      # exists it will be used instead of the setting and the setting will be hidden.
-      # Useful for things like API keys on multisite.
       if opts[:shadowed_by_global] && GlobalSetting.respond_to?(name)
-        hidden_settings << name
-        shadowed_settings << name
-        current_value = GlobalSetting.send(name)
+        val = GlobalSetting.send(name)
+
+        unless val.nil? || (val == ''.freeze)
+          hidden_settings << name
+          shadowed_settings << name
+          current_value = val
+        end
       end
 
       if opts[:refresh]
@@ -151,7 +151,7 @@ module SiteSettingExtension
   # just like a setting, except that it is available in javascript via DiscourseSession
   def client_setting(name, default = nil, opts = {})
     setting(name, default, opts)
-    client_settings << name
+    client_settings << name.to_sym
   end
 
   def settings_hash
@@ -217,26 +217,20 @@ module SiteSettingExtension
       ensure_listen_for_changes
       old = current
 
-      new_hash =  Hash[*(provider.all.map{ |s|
-        [s.name.intern, convert(s.value,s.data_type)]
+      new_hash =  Hash[*(provider.all.map { |s|
+        [s.name.intern, convert(s.value, s.data_type, s.name)]
       }.to_a.flatten)]
 
       # add defaults, cause they are cached
       new_hash = defaults.merge(new_hash)
 
       # add shadowed
-      shadowed_settings.each do |ss|
-        new_hash[ss] = GlobalSetting.send(ss)
-      end
+      shadowed_settings.each { |ss| new_hash[ss] = GlobalSetting.send(ss) }
 
       changes, deletions = diff_hash(new_hash, old)
 
-      changes.each do |name, val|
-        current[name] = val
-      end
-      deletions.each do |name, val|
-        current[name] = defaults[name]
-      end
+      changes.each   { |name, val| current[name] = val }
+      deletions.each { |name, val| current[name] = defaults[name] }
 
       clear_cache!
     end
@@ -286,7 +280,7 @@ module SiteSettingExtension
   end
 
   def add_override!(name, val)
-    type = get_data_type(name, defaults[name])
+    type = get_data_type(name, defaults[name.to_sym])
 
     if type == types[:bool] && val != true && val != false
       val = (val == "t" || val == "true") ? 't' : 'f'
@@ -301,7 +295,7 @@ module SiteSettingExtension
     end
 
     if type == types[:enum]
-      val = val.to_i if Fixnum === defaults[name.to_sym]
+      val = val.to_i if defaults[name.to_sym].is_a?(Fixnum)
       if enum_class(name)
         raise Discourse::InvalidParameters.new(:value) unless enum_class(name).valid_value?(val)
       else
@@ -321,7 +315,7 @@ module SiteSettingExtension
     end
 
     provider.save(name, val, type)
-    current[name] = convert(val, type)
+    current[name] = convert(val, type, name)
     notify_clients!(name) if client_settings.include? name
     clear_cache!
   end
@@ -355,12 +349,9 @@ module SiteSettingExtension
   end
 
   def filter_value(name, value)
-    # filter domain name
-    if %w[disabled_image_download_domains onebox_domains_whitelist exclude_rel_nofollow_domains email_domains_blacklist email_domains_whitelist white_listed_spam_host_domains].include? name
+    if %w[disabled_image_download_domains onebox_domains_blacklist exclude_rel_nofollow_domains email_domains_blacklist email_domains_whitelist white_listed_spam_host_domains].include? name
       domain_array = []
-      value.split('|').each { |url|
-        domain_array.push(get_hostname(url))
-      }
+      value.split('|').each { |url| domain_array << get_hostname(url) }
       value = domain_array.join("|")
     end
     value
@@ -376,11 +367,17 @@ module SiteSettingExtension
     end
   end
 
+  def set_and_log(name, value, user=Discourse.system_user)
+    prev_value = send(name)
+    set(name, value)
+    StaffActionLogger.new(user).log_site_setting_change(name, prev_value, value) if has_setting?(name)
+  end
+
   protected
 
   def clear_cache!
-    SiteText.text_for_cache.clear
     Rails.cache.delete(SiteSettingExtension.client_settings_cache_key)
+    Site.clear_anon_cache!
   end
 
   def diff_hash(new_hash, old)
@@ -401,8 +398,8 @@ module SiteSettingExtension
   def get_data_type(name, val)
     return types[:null] if val.nil?
 
-    # Some types are just for validations like email. Only consider
-    # it valid if includes in `types`
+    # Some types are just for validations like email.
+    # Only consider it valid if includes in `types`
     if static_type = static_types[name.to_sym]
       return types[static_type] if types.keys.include?(static_type)
     end
@@ -421,7 +418,7 @@ module SiteSettingExtension
     end
   end
 
-  def convert(value, type)
+  def convert(value, type, name)
     case type
     when types[:float]
       value.to_f
@@ -431,9 +428,10 @@ module SiteSettingExtension
       value == true || value == "t" || value == "true"
     when types[:null]
       nil
+    when types[:enum]
+      defaults[name.to_sym].is_a?(Fixnum) ? value.to_i : value
     else
       return value if types[type]
-
       # Otherwise it's a type error
       raise ArgumentError.new :type
     end
@@ -446,11 +444,34 @@ module SiteSettingExtension
       types[:fixnum] => IntegerSettingValidator,
       types[:string] => StringSettingValidator,
       'list' => StringSettingValidator,
-      'enum' => StringSettingValidator
+      'enum' => StringSettingValidator,
+      'regex' => RegexSettingValidator
     }
     @validator_mapping[type_name]
   end
 
+  DEPRECATED_SETTINGS = [
+    ['use_https', 'force_https', '1.7']
+  ]
+
+  def setup_deprecated_methods
+    DEPRECATED_SETTINGS.each do |old_setting, new_setting, version|
+      define_singleton_method old_setting do
+        logger.warn("`SiteSetting.#{old_setting}` has been deprecated and will be removed in the #{version} Release. Please use `SiteSetting.#{new_setting}` instead")
+        self.public_send new_setting
+      end
+
+      define_singleton_method "#{old_setting}?" do
+        logger.warn("`SiteSetting.#{old_setting}?` has been deprecated and will be removed in the #{version} Release. Please use `SiteSetting.#{new_setting}?` instead")
+        self.public_send "#{new_setting}?"
+      end
+
+      define_singleton_method "#{old_setting}=" do |val|
+        logger.warn("`SiteSetting.#{old_setting}=` has been deprecated and will be removed in the #{version} Release. Please use `SiteSetting.#{new_setting}=` instead")
+        self.public_send "#{new_setting}=", val
+      end
+    end
+  end
 
   def setup_methods(name)
     clean_name = name.to_s.sub("?", "").to_sym
@@ -484,6 +505,12 @@ module SiteSettingExtension
       url = URI.parse(url).host
     end
     url
+  end
+
+  private
+
+  def logger
+    Rails.logger
   end
 
 end

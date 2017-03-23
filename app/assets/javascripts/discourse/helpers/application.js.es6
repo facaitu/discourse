@@ -1,54 +1,32 @@
-import registerUnbound from 'discourse/helpers/register-unbound';
-import avatarTemplate from 'discourse/lib/avatar-template';
+import { registerUnbound } from 'discourse-common/lib/helpers';
 import { longDate, autoUpdatingRelativeAge, number } from 'discourse/lib/formatter';
 
 const safe = Handlebars.SafeString;
 
-Em.Handlebars.helper('bound-avatar', function(user, size, uploadId) {
-  if (Em.isEmpty(user)) {
-    return new safe("<div class='avatar-placeholder'></div>");
-  }
+registerUnbound('raw-date', dt => longDate(new Date(dt)));
 
-  const username = Em.get(user, 'username');
-  if (arguments.length < 4) { uploadId = Em.get(user, 'uploaded_avatar_id'); }
-  const avatar = Em.get(user, 'avatar_template') || avatarTemplate(username, uploadId);
+registerUnbound('age-with-tooltip', dt => new safe(autoUpdatingRelativeAge(new Date(dt), {title: true})));
 
-  return new safe(Discourse.Utilities.avatarImg({ size: size, avatarTemplate: avatar }));
-}, 'username', 'uploaded_avatar_id', 'avatar_template');
-
-/*
- * Used when we only have a template
- */
-Em.Handlebars.helper('bound-avatar-template', function(at, size) {
-  return new safe(Discourse.Utilities.avatarImg({ size: size, avatarTemplate: at }));
-});
-
-registerUnbound('raw-date', function(dt) {
-  return longDate(new Date(dt));
-});
-
-registerUnbound('age-with-tooltip', function(dt) {
-  return new safe(autoUpdatingRelativeAge(new Date(dt), {title: true}));
-});
-
-registerUnbound('number', function(orig, params) {
+registerUnbound('number', (orig, params) => {
   orig = parseInt(orig, 10);
   if (isNaN(orig)) { orig = 0; }
 
-  let title = orig;
+  let title = I18n.toNumber(orig, { precision: 0 });
   if (params.numberKey) {
-    title = I18n.t(params.numberKey, { number: orig });
+    title = I18n.t(params.numberKey, { number: title });
   }
 
   let classNames = 'number';
   if (params['class']) {
     classNames += ' ' + params['class'];
   }
+
   let result = "<span class='" + classNames + "'";
+  let addTitle = params.noTitle ? false : true;
 
   // Round off the thousands to one decimal place
   const n = number(orig);
-  if (n !== title) {
+  if (n.toString() !== title.toString() && addTitle) {
     result += " title='" + Handlebars.Utils.escapeExpression(title) + "'";
   }
   result += ">" + n + "</span>";

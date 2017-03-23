@@ -6,6 +6,7 @@ class AdminDashboardData
   GLOBAL_REPORTS ||= [
     'visits',
     'signups',
+    'profile_views',
     'topics',
     'posts',
     'time_to_first_response',
@@ -32,30 +33,76 @@ class AdminDashboardData
 
   MOBILE_REPORTS ||= ['mobile_visits'] + ApplicationRequest.req_types.keys.select {|r| r =~ /mobile/}.map { |r| r + "_reqs" }
 
+  def self.add_problem_check(*syms, &blk)
+    @problem_syms.push(*syms) if syms
+    @problem_blocks << blk if blk
+  end
+  class << self; attr_reader :problem_syms, :problem_blocks, :problem_messages; end
+
   def problems
-    [ rails_env_check,
-      ruby_version_check,
-      host_names_check,
-      gc_checks,
-      sidekiq_check || queue_size_check,
-      ram_check,
-      google_oauth2_config_check,
-      facebook_config_check,
-      twitter_config_check,
-      github_config_check,
-      s3_config_check,
-      image_magick_check,
-      failing_emails_check,
-      default_logo_check,
-      contact_email_check,
-      send_consumer_email_check,
-      title_check,
-      site_description_check,
-      site_contact_username_check,
-      notification_email_check
-    ].compact
+    problems = []
+    AdminDashboardData.problem_syms.each do |sym|
+      problems << send(sym)
+    end
+    AdminDashboardData.problem_blocks.each do |blk|
+      problems << instance_exec(&blk)
+    end
+    AdminDashboardData.problem_messages.each do |i18n_key|
+      problems << AdminDashboardData.problem_message_check(i18n_key)
+    end
+    problems.compact!
+
+    if problems.empty?
+      self.class.clear_problems_started
+    else
+      self.class.set_problems_started
+    end
+
+    problems
   end
 
+  def self.problems_started_key
+    "dash-problems-started-at"
+  end
+
+  def self.set_problems_started
+    existing_time = $redis.get(problems_started_key)
+    $redis.setex(problems_started_key, 14.days.to_i, existing_time || Time.zone.now.to_s)
+  end
+
+  def self.clear_problems_started
+    $redis.del problems_started_key
+  end
+
+  def self.problems_started_at
+    s = $redis.get(problems_started_key)
+    s ? Time.zone.parse(s) : nil
+  end
+
+  # used for testing
+  def self.reset_problem_checks
+    @problem_syms = []
+    @problem_blocks = []
+
+    @problem_messages = [
+      'dashboard.bad_favicon_url',
+      'dashboard.poll_pop3_timeout',
+      'dashboard.poll_pop3_auth_error'
+    ]
+
+    add_problem_check :rails_env_check, :host_names_check,
+                      :ram_check, :google_oauth2_config_check,
+                      :facebook_config_check, :twitter_config_check,
+                      :github_config_check, :s3_config_check, :image_magick_check,
+                      :failing_emails_check,
+                      :subfolder_ends_in_slash_check,
+                      :pop3_polling_configuration, :email_polling_errored_recently
+
+    add_problem_check do
+      sidekiq_check || queue_size_check
+    end
+  end
+  reset_problem_checks
 
   def self.fetch_stats
     AdminDashboardData.new.as_json
@@ -67,6 +114,26 @@ class AdminDashboardData
 
   def self.fetch_problems
     AdminDashboardData.new.problems
+  end
+
+  def self.problem_message_check(i18n_key)
+    $redis.get(problem_message_key(i18n_key)) ? I18n.t(i18n_key) : nil
+  end
+
+  def self.add_problem_message(i18n_key, expire_seconds=nil)
+    if expire_seconds.to_i > 0
+      $redis.setex problem_message_key(i18n_key), expire_seconds.to_i, 1
+    else
+      $redis.set problem_message_key(i18n_key), 1
+    end
+  end
+
+  def self.clear_problem_message(i18n_key)
+    $redis.del problem_message_key(i18n_key)
+  end
+
+  def self.problem_message_key(i18n_key)
+    "admin-problem:#{i18n_key}"
   end
 
   def as_json(_options = nil)
@@ -98,10 +165,6 @@ class AdminDashboardData
 
   def host_names_check
     I18n.t("dashboard.host_names_warning") if ['localhost', 'production.localhost'].include?(Discourse.current_hostname)
-  end
-
-  def gc_checks
-    I18n.t("dashboard.gc_warning") if ENV['RUBY_GC_MALLOC_LIMIT'].nil?
   end
 
   def sidekiq_check
@@ -151,41 +214,24 @@ class AdminDashboardData
     I18n.t('dashboard.failing_emails_warning', num_failed_jobs: num_failed_jobs) if num_failed_jobs > 0
   end
 
-  def default_logo_check
-    if SiteSetting.logo_url =~ /#{SiteSetting.defaults[:logo_url].split('/').last}/ or
-        SiteSetting.logo_small_url =~ /#{SiteSetting.defaults[:logo_small_url].split('/').last}/ or
-        SiteSetting.favicon_url =~ /#{SiteSetting.defaults[:favicon_url].split('/').last}/
-      I18n.t('dashboard.default_logo_warning')
-    end
+  def subfolder_ends_in_slash_check
+    I18n.t('dashboard.subfolder_ends_in_slash') if Discourse.base_uri =~ /\/$/
   end
 
-  def contact_email_check
-    return I18n.t('dashboard.contact_email_missing') if !SiteSetting.contact_email.present?
-    return I18n.t('dashboard.contact_email_invalid') if !(SiteSetting.contact_email =~ User::EMAIL)
+  def pop3_polling_configuration
+    POP3PollingEnabledSettingValidator.new.error_message if SiteSetting.pop3_polling_enabled
   end
 
-  def title_check
-    I18n.t('dashboard.title_nag') if SiteSetting.title == SiteSetting.defaults[:title]
+  def email_polling_errored_recently
+    errors = Jobs::PollMailbox.errors_in_past_24_hours
+    I18n.t('dashboard.email_polling_errored_recently', count: errors) if errors > 0
   end
 
-  def site_description_check
-    I18n.t('dashboard.site_description_missing') if !SiteSetting.site_description.present?
-  end
-
-  def send_consumer_email_check
-    I18n.t('dashboard.consumer_email_warning') if Rails.env.production? and ActionMailer::Base.smtp_settings[:address] =~ /gmail\.com|live\.com|yahoo\.com/
-  end
-
-  def site_contact_username_check
-    I18n.t('dashboard.site_contact_username_warning') if !SiteSetting.site_contact_username.present? || SiteSetting.site_contact_username == SiteSetting.defaults[:site_contact_username]
-  end
-
-  def notification_email_check
-    I18n.t('dashboard.notification_email_warning') if !SiteSetting.notification_email.present? || SiteSetting.notification_email == SiteSetting.defaults[:notification_email]
-  end
-
-  def ruby_version_check
-    I18n.t('dashboard.ruby_version_warning') if RUBY_VERSION == '2.0.0' and RUBY_PATCHLEVEL < 247
+  def missing_mailgun_api_key
+    return unless SiteSetting.reply_by_email_enabled
+    return unless ActionMailer::Base.smtp_settings[:address]["smtp.mailgun.org"]
+    return unless SiteSetting.mailgun_api_key.blank?
+    I18n.t('dashboard.missing_mailgun_api_key')
   end
 
 end

@@ -1,12 +1,13 @@
 import { exportEntity } from 'discourse/lib/export-csv';
 import { outputExportResult } from 'discourse/lib/export-result';
+import ScreenedEmail from 'admin/models/screened-email';
 
-export default Ember.ArrayController.extend({
+export default Ember.Controller.extend({
   loading: false,
 
   actions: {
     clearBlock(row){
-      row.clearBlock().then(function(){
+      row.clearBlock().then(function() {
         // feeling lazy
         window.location.reload();
       });
@@ -18,11 +19,10 @@ export default Ember.ArrayController.extend({
   },
 
   show() {
-    var self = this;
-    self.set('loading', true);
-    Discourse.ScreenedEmail.findAll().then(function(result) {
-      self.set('model', result);
-      self.set('loading', false);
+    this.set('loading', true);
+    ScreenedEmail.findAll().then(result => {
+      this.set('model', result);
+      this.set('loading', false);
     });
   }
 });

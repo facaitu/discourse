@@ -1,7 +1,6 @@
 .menu-panel.slide-in {
   position: fixed;
   right: 0;
-  top: 0;
 
   .panel-body {
     position: absolute;
@@ -13,6 +12,9 @@
 
 .menu-panel.drop-down {
   position: absolute;
+  // positions are relative to the .d-header .panel div
+  top: 100%; // directly underneath .panel
+  right: -10px; // 10px to the right of .panel - adjust as needed
 }
 
 .menu-panel {
@@ -20,7 +22,6 @@
   box-shadow: 0 2px 2px rgba(0,0,0, .25);
   background-color: $secondary;
   z-index: 1100;
-  overflow: none;
   padding: 0.5em;
   width: 300px;
 
@@ -268,6 +269,14 @@ div.menu-links-header {
   }
   a {
     padding: 0.5em;
+  }
+  a.user-activity-link {
+    max-width: 150px;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: -0.5em 0;
   }
   li {
     display: table-cell;

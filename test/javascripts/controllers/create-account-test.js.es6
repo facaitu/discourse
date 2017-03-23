@@ -1,4 +1,9 @@
+import { mapRoutes } from 'discourse/mapping-router';
+
 moduleFor("controller:create-account", "controller:create-account", {
+  setup() {
+    this.registry.register('router:main', mapRoutes());
+  },
   needs: ['controller:modal', 'controller:login']
 });
 
@@ -28,11 +33,11 @@ test('passwordValidation', function() {
 
   var controller = subject();
   controller.set('passwordRequired', true);
-  controller.set('accountEmail',      'pork@chops.com');
-  controller.set('accountUsername',   'porkchops');
+  controller.set('accountEmail', 'pork@chops.com');
+  controller.set('accountUsername', 'porkchops');
   controller.set('prefilledUsername', 'porkchops');
 
-  controller.set('accountPassword',   'b4fcdae11f9167');
+  controller.set('accountPassword', 'b4fcdae11f9167');
   equal(controller.get('passwordValidation.ok'), true, 'Password is ok');
   equal(controller.get('passwordValidation.reason'), I18n.t('user.password.ok'), 'Password is valid');
 

@@ -1,7 +1,9 @@
-import { iconHTML } from 'discourse/helpers/fa-icon';
-import computed from 'ember-addons/ember-computed-decorators';
+import { default as computed } from 'ember-addons/ember-computed-decorators';
 
 export default Ember.Component.extend({
+  // subclasses need this
+  layoutName: 'components/d-button',
+
   tagName: 'button',
   classNameBindings: [':btn', 'noText'],
   attributeBindings: ['disabled', 'translatedTitle:title'],
@@ -16,19 +18,6 @@ export default Ember.Component.extend({
   @computed("label")
   translatedLabel(label) {
     if (label) return I18n.t(label);
-  },
-
-  render(buffer) {
-    const label = this.get('translatedLabel'),
-          icon = this.get('icon');
-
-    if (label || icon) {
-      if (icon) { buffer.push(iconHTML(icon) + ' '); }
-      if (label) { buffer.push(label); }
-    } else {
-      // If no label or icon is present, yield
-      return this._super(buffer);
-    }
   },
 
   click() {

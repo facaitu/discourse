@@ -1,10 +1,31 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'user'
 
 describe User do
 
-  it { is_expected.to validate_presence_of :username }
-  it { is_expected.to validate_presence_of :email }
+  context 'validations' do
+    it { is_expected.to validate_presence_of :username }
+
+    describe 'emails' do
+      let(:user) { Fabricate.build(:user) }
+
+      it { is_expected.to validate_presence_of :email }
+
+      describe 'when record has a valid email' do
+        it "should be valid" do
+          user.email = 'test@gmail.com'
+          expect(user).to be_valid
+        end
+      end
+
+      describe 'when record has an invalid email' do
+        it 'should not be valid' do
+          user.email = 'test@gmailcom'
+          expect(user).to_not be_valid
+        end
+      end
+    end
+  end
 
   describe '#count_by_signup_date' do
     before(:each) do
@@ -38,7 +59,6 @@ describe User do
       Jobs.expects(:enqueue).with(:send_system_message, user_id: user.id, message_type: 'welcome_user').never
       user.enqueue_welcome_message('welcome_user')
     end
-
   end
 
   describe '.approve' do
@@ -48,7 +68,7 @@ describe User do
     it "enqueues a 'signup after approval' email if must_approve_users is true" do
       SiteSetting.stubs(:must_approve_users).returns(true)
       Jobs.expects(:enqueue).with(
-        :user_email, has_entries(type: :signup_after_approval)
+        :critical_user_email, has_entries(type: :signup_after_approval)
       )
       user.approve(admin)
     end
@@ -56,6 +76,12 @@ describe User do
     it "doesn't enqueue a 'signup after approval' email if must_approve_users is false" do
       SiteSetting.stubs(:must_approve_users).returns(false)
       Jobs.expects(:enqueue).never
+      user.approve(admin)
+    end
+
+    it 'triggers a extensibility event' do
+      user && admin # bypass the user_created event
+      DiscourseEvent.expects(:trigger).with(:user_approved, user).once
       user.approve(admin)
     end
 
@@ -152,15 +178,20 @@ describe User do
     it "is properly initialized" do
       expect(subject.approved_at).to be_blank
       expect(subject.approved_by_id).to be_blank
-      expect(subject.email_private_messages).to eq(true)
-      expect(subject.email_direct).to eq(true)
+    end
+
+    it 'triggers an extensibility event' do
+      DiscourseEvent.expects(:trigger).with(:user_created, subject).once
+      subject.save!
     end
 
     context 'after_save' do
-      before { subject.save }
+      before { subject.save! }
 
-      it "has an email token" do
+      it "has correct settings" do
         expect(subject.email_tokens).to be_present
+        expect(subject.user_option.email_private_messages).to eq(true)
+        expect(subject.user_option.email_direct).to eq(true)
       end
     end
 
@@ -205,7 +236,7 @@ describe User do
     describe 'has_trust_level?' do
 
       it "raises an error with an invalid level" do
-        expect { user.has_trust_level?(:wat) }.to raise_error
+        expect { user.has_trust_level?(:wat) }.to raise_error(InvalidTrustLevel)
       end
 
       it "is true for your basic level" do
@@ -324,10 +355,25 @@ describe User do
       FacebookUserInfo.create(user_id: user.id, username: "sam", facebook_user_id: 1)
       GoogleUserInfo.create(user_id: user.id, email: "sam@sam.com", google_user_id: 1)
       GithubUserInfo.create(user_id: user.id, screen_name: "sam", github_user_id: 1)
+      Oauth2UserInfo.create(user_id: user.id, provider: "linkedin", email: "sam@sam.com", uid: 1)
 
       user.reload
-      expect(user.associated_accounts).to eq("Twitter(sam), Facebook(sam), Google(sam@sam.com), Github(sam)")
+      expect(user.associated_accounts).to eq("Twitter(sam), Facebook(sam), Google(sam@sam.com), Github(sam), linkedin(sam@sam.com)")
 
+    end
+  end
+
+  describe '.is_singular_admin?' do
+    it 'returns true if user is singular admin' do
+      admin = Fabricate(:admin)
+      expect(admin.is_singular_admin?).to eq(true)
+    end
+
+    it 'returns false if user is not the only admin' do
+      admin = Fabricate(:admin)
+      Fabricate(:admin)
+
+      expect(admin.is_singular_admin?).to eq(false)
     end
   end
 
@@ -419,6 +465,14 @@ describe User do
     it 'returns false when a username is taken' do
       expect(User.username_available?(Fabricate(:user).username)).to eq(false)
     end
+
+    it 'returns false when a username is reserved' do
+      SiteSetting.reserved_usernames = 'test|donkey'
+
+      expect(User.username_available?('donkey')).to eq(false)
+      expect(User.username_available?('DonKey')).to eq(false)
+      expect(User.username_available?('test')).to eq(false)
+    end
   end
 
   describe 'email_validator' do
@@ -428,65 +482,72 @@ describe User do
     end
 
     it 'should reject some emails based on the email_domains_blacklist site setting' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('mailinator.com')
+      SiteSetting.email_domains_blacklist = 'mailinator.com'
       expect(Fabricate.build(:user, email: 'notgood@mailinator.com')).not_to be_valid
       expect(Fabricate.build(:user, email: 'mailinator@gmail.com')).to be_valid
     end
 
     it 'should reject some emails based on the email_domains_blacklist site setting' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('mailinator.com|trashmail.net')
+      SiteSetting.email_domains_blacklist = 'mailinator.com|trashmail.net'
       expect(Fabricate.build(:user, email: 'notgood@mailinator.com')).not_to be_valid
       expect(Fabricate.build(:user, email: 'notgood@trashmail.net')).not_to be_valid
       expect(Fabricate.build(:user, email: 'mailinator.com@gmail.com')).to be_valid
     end
 
     it 'should not reject partial matches' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('mail.com')
+      SiteSetting.email_domains_blacklist = 'mail.com'
       expect(Fabricate.build(:user, email: 'mailinator@gmail.com')).to be_valid
     end
 
     it 'should reject some emails based on the email_domains_blacklist site setting ignoring case' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('trashmail.net')
+      SiteSetting.email_domains_blacklist = 'trashmail.net'
       expect(Fabricate.build(:user, email: 'notgood@TRASHMAIL.NET')).not_to be_valid
     end
 
     it 'should reject emails based on the email_domains_blacklist site setting matching subdomain' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('domain.com')
+      SiteSetting.email_domains_blacklist = 'domain.com'
       expect(Fabricate.build(:user, email: 'notgood@sub.domain.com')).not_to be_valid
+    end
+
+    it 'skips the blacklist if skip_email_validation is set' do
+      SiteSetting.email_domains_blacklist = 'domain.com'
+      user = Fabricate.build(:user, email: 'notgood@sub.domain.com')
+      user.skip_email_validation = true
+      expect(user).to be_valid
     end
 
     it 'blacklist should not reject developer emails' do
       Rails.configuration.stubs(:developer_emails).returns('developer@discourse.org')
-      SiteSetting.stubs(:email_domains_blacklist).returns('discourse.org')
+      SiteSetting.email_domains_blacklist = 'discourse.org'
       expect(Fabricate.build(:user, email: 'developer@discourse.org')).to be_valid
     end
 
     it 'should not interpret a period as a wildcard' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('trashmail.net')
+      SiteSetting.email_domains_blacklist = 'trashmail.net'
       expect(Fabricate.build(:user, email: 'good@trashmailinet.com')).to be_valid
     end
 
     it 'should not be used to validate existing records' do
       u = Fabricate(:user, email: 'in_before_blacklisted@fakemail.com')
-      SiteSetting.stubs(:email_domains_blacklist).returns('fakemail.com')
+      SiteSetting.email_domains_blacklist = 'fakemail.com'
       expect(u).to be_valid
     end
 
     it 'should be used when email is being changed' do
-      SiteSetting.stubs(:email_domains_blacklist).returns('mailinator.com')
+      SiteSetting.email_domains_blacklist = 'mailinator.com'
       u = Fabricate(:user, email: 'good@gmail.com')
       u.email = 'nope@mailinator.com'
       expect(u).not_to be_valid
     end
 
     it 'whitelist should reject some emails based on the email_domains_whitelist site setting' do
-      SiteSetting.stubs(:email_domains_whitelist).returns('vaynermedia.com')
+      SiteSetting.email_domains_whitelist = 'vaynermedia.com'
       expect(Fabricate.build(:user, email: 'notgood@mailinator.com')).not_to be_valid
       expect(Fabricate.build(:user, email: 'sbauch@vaynermedia.com')).to be_valid
     end
 
     it 'should reject some emails based on the email_domains_whitelist site setting when whitelisting multiple domains' do
-      SiteSetting.stubs(:email_domains_whitelist).returns('vaynermedia.com|gmail.com')
+      SiteSetting.email_domains_whitelist = 'vaynermedia.com|gmail.com'
       expect(Fabricate.build(:user, email: 'notgood@mailinator.com')).not_to be_valid
       expect(Fabricate.build(:user, email: 'notgood@trashmail.net')).not_to be_valid
       expect(Fabricate.build(:user, email: 'mailinator.com@gmail.com')).to be_valid
@@ -494,27 +555,33 @@ describe User do
     end
 
     it 'should accept some emails based on the email_domains_whitelist site setting ignoring case' do
-      SiteSetting.stubs(:email_domains_whitelist).returns('vaynermedia.com')
+      SiteSetting.email_domains_whitelist = 'vaynermedia.com'
       expect(Fabricate.build(:user, email: 'good@VAYNERMEDIA.COM')).to be_valid
     end
 
     it 'whitelist should accept developer emails' do
       Rails.configuration.stubs(:developer_emails).returns('developer@discourse.org')
-      SiteSetting.stubs(:email_domains_whitelist).returns('awesome.org')
+      SiteSetting.email_domains_whitelist = 'awesome.org'
       expect(Fabricate.build(:user, email: 'developer@discourse.org')).to be_valid
     end
 
     it 'email whitelist should not be used to validate existing records' do
       u = Fabricate(:user, email: 'in_before_whitelisted@fakemail.com')
-      SiteSetting.stubs(:email_domains_blacklist).returns('vaynermedia.com')
+      SiteSetting.email_domains_blacklist = 'vaynermedia.com'
       expect(u).to be_valid
     end
 
     it 'email whitelist should be used when email is being changed' do
-      SiteSetting.stubs(:email_domains_whitelist).returns('vaynermedia.com')
+      SiteSetting.email_domains_whitelist = 'vaynermedia.com'
       u = Fabricate(:user, email: 'good@vaynermedia.com')
       u.email = 'nope@mailinator.com'
       expect(u).not_to be_valid
+    end
+
+    it "doesn't validate email address for staged users" do
+      SiteSetting.email_domains_whitelist = "foo.com"
+      SiteSetting.email_domains_blacklist = "bar.com"
+      expect(Fabricate.build(:user, staged: true, email: "foo@bar.com")).to be_valid
     end
   end
 
@@ -581,6 +648,29 @@ describe User do
       expect(user.previous_visit_at).to be_within_one_second_of(second_visit_date)
     end
 
+  end
+
+  describe "update_last_seen!" do
+    let (:user) { Fabricate(:user) }
+    let!(:first_visit_date) { Time.zone.now }
+    let!(:second_visit_date) { 2.hours.from_now }
+
+    it "should update the last seen value" do
+      expect(user.last_seen_at).to eq nil
+      user.update_last_seen!(first_visit_date)
+      expect(user.reload.last_seen_at).to be_within_one_second_of(first_visit_date)
+    end
+
+    it "should update the first seen value if it doesn't exist" do
+      user.update_last_seen!(first_visit_date)
+      expect(user.reload.first_seen_at).to be_within_one_second_of(first_visit_date)
+    end
+
+    it "should not update the first seen value if it doesn't exist" do
+      user.update_last_seen!(first_visit_date)
+      user.update_last_seen!(second_visit_date)
+      expect(user.reload.first_seen_at).to be_within_one_second_of(first_visit_date)
+    end
   end
 
   describe "last_seen_at" do
@@ -705,7 +795,19 @@ describe User do
 
       # It doesn't raise an exception if called again
       user.flag_linked_posts_as_spam
+    end
 
+    it "does not flags post as spam if the previous flag for that post was disagreed" do
+      user.flag_linked_posts_as_spam
+
+      post.reload
+      expect(post.spam_count).to eq(1)
+
+      PostAction.clear_flags!(post, admin)
+      user.flag_linked_posts_as_spam
+
+      post.reload
+      expect(post.spam_count).to eq(0)
     end
 
   end
@@ -758,17 +860,29 @@ describe User do
 
   end
 
-  describe "#first_day_user?" do
+  describe "#new_user_posting_on_first_day?" do
 
     def test_user?(opts={})
-      Fabricate.build(:user, {created_at: Time.now}.merge(opts)).first_day_user?
+      Fabricate.build(:user, {created_at: Time.zone.now}.merge(opts)).new_user_posting_on_first_day?
     end
 
-    it "works" do
+    it "handles when user has never posted" do
       expect(test_user?).to eq(true)
       expect(test_user?(moderator: true)).to eq(false)
       expect(test_user?(trust_level: TrustLevel[2])).to eq(false)
-      expect(test_user?(created_at: 2.days.ago)).to eq(false)
+      expect(test_user?(created_at: 2.days.ago)).to eq(true)
+    end
+
+    it "is true for a user who posted less than 24 hours ago but was created over 1 day ago" do
+      u = Fabricate(:user, created_at: 28.hours.ago)
+      u.user_stat.first_post_created_at = 1.hour.ago
+      expect(u.new_user_posting_on_first_day?).to eq(true)
+    end
+
+    it "is false if first post was more than 24 hours ago" do
+      u = Fabricate(:user, created_at: 28.hours.ago)
+      u.user_stat.first_post_created_at = 25.hours.ago
+      expect(u.new_user_posting_on_first_day?).to eq(false)
     end
   end
 
@@ -829,6 +943,7 @@ describe User do
     before do
       # To make testing easier, say 1 reply is too much
       SiteSetting.stubs(:newuser_max_replies_per_topic).returns(1)
+      UserActionCreator.enable
     end
 
     context "for a user who didn't create the topic" do
@@ -845,7 +960,10 @@ describe User do
 
       context "with a reply" do
         before do
-          PostCreator.new(Fabricate(:user), raw: 'whatever this is a raw post', topic_id: topic.id, reply_to_post_number: post.post_number).create
+          PostCreator.new(Fabricate(:user),
+                            raw: 'whatever this is a raw post',
+                            topic_id: topic.id,
+                            reply_to_post_number: post.post_number).create
         end
 
         it "resets the `posted_too_much` threshold" do
@@ -896,7 +1014,11 @@ describe User do
     let(:user) { build(:user, username: 'Sam') }
 
     it "returns a 45-pixel-wide avatar" do
+      SiteSetting.external_system_avatars_enabled = false
       expect(user.small_avatar_url).to eq("//test.localhost/letter_avatar/sam/45/#{LetterAvatar.version}.png")
+
+      SiteSetting.external_system_avatars_enabled = true
+      expect(user.small_avatar_url).to eq("//test.localhost/letter_avatar_proxy/v2/letter/s/5f9b8f/45.png")
     end
 
   end
@@ -970,106 +1092,11 @@ describe User do
     end
   end
 
-  context "group management" do
-    let!(:user) { Fabricate(:user) }
-
-    it "by default has no managed groups" do
-      expect(user.managed_groups).to be_empty
-    end
-
-    it "can manage multiple groups" do
-      3.times do |i|
-        g = Fabricate(:group, name: "group_#{i}")
-        g.appoint_manager(user)
-      end
-      expect(user.managed_groups.count).to eq(3)
-    end
-  end
-
-  describe "should_be_redirected_to_top" do
-    let!(:user) { Fabricate(:user) }
-
-    it "should be redirected to top when there is a reason to" do
-      user.expects(:redirected_to_top_reason).returns("42")
-      expect(user.should_be_redirected_to_top).to eq(true)
-    end
-
-    it "should not be redirected to top when there is no reason to" do
-      user.expects(:redirected_to_top_reason).returns(nil)
-      expect(user.should_be_redirected_to_top).to eq(false)
-    end
-
-  end
-
-  describe ".redirected_to_top_reason" do
-    let!(:user) { Fabricate(:user) }
-
-    it "should have no reason when `SiteSetting.redirect_users_to_top_page` is disabled" do
-      SiteSetting.expects(:redirect_users_to_top_page).returns(false)
-      expect(user.redirected_to_top_reason).to eq(nil)
-    end
-
-    context "when `SiteSetting.redirect_users_to_top_page` is enabled" do
-      before { SiteSetting.expects(:redirect_users_to_top_page).returns(true) }
-
-      it "should have no reason when top is not in the `SiteSetting.top_menu`" do
-        SiteSetting.expects(:top_menu).returns("latest")
-        expect(user.redirected_to_top_reason).to eq(nil)
-      end
-
-      context "and when top is in the `SiteSetting.top_menu`" do
-        before { SiteSetting.expects(:top_menu).returns("latest|top") }
-
-        it "should have no reason when there aren't enough topics" do
-          SiteSetting.expects(:has_enough_topics_to_redirect_to_top).returns(false)
-          expect(user.redirected_to_top_reason).to eq(nil)
-        end
-
-        context "and when there are enough topics" do
-          before { SiteSetting.expects(:has_enough_topics_to_redirect_to_top).returns(true) }
-
-          describe "a new user" do
-            before do
-              user.stubs(:trust_level).returns(0)
-              user.stubs(:last_seen_at).returns(5.minutes.ago)
-            end
-
-            it "should have a reason for the first visit" do
-              user.expects(:last_redirected_to_top_at).returns(nil)
-              user.expects(:update_last_redirected_to_top!).once
-
-              expect(user.redirected_to_top_reason).to eq(I18n.t('redirected_to_top_reasons.new_user'))
-            end
-
-            it "should not have a reason for next visits" do
-              user.expects(:last_redirected_to_top_at).returns(10.minutes.ago)
-              user.expects(:update_last_redirected_to_top!).never
-
-              expect(user.redirected_to_top_reason).to eq(nil)
-            end
-          end
-
-          describe "an older user" do
-            before { user.stubs(:trust_level).returns(1) }
-
-            it "should have a reason when the user hasn't been seen in a month" do
-              user.last_seen_at = 2.months.ago
-              user.expects(:update_last_redirected_to_top!).once
-
-              expect(user.redirected_to_top_reason).to eq(I18n.t('redirected_to_top_reasons.not_seen_in_a_month'))
-            end
-          end
-
-        end
-
-      end
-
-    end
-
-  end
 
   describe "automatic avatar creation" do
     it "sets a system avatar for new users" do
+      SiteSetting.external_system_avatars_enabled = false
+
       u = User.create!(username: "bob", email: "bob@bob.com")
       u.reload
       expect(u.uploaded_avatar_id).to eq(nil)
@@ -1149,7 +1176,7 @@ describe User do
     end
 
     it "raises an error when passwords are too long" do
-      expect { hash(too_long, 'gravy') }.to raise_error
+      expect { hash(too_long, 'gravy') }.to raise_error(StandardError)
     end
 
   end
@@ -1161,6 +1188,23 @@ describe User do
       user = Fabricate(:user, email: "foo@bar.com")
       group.reload
       expect(group.users.include?(user)).to eq(true)
+
+      group_history = GroupHistory.last
+
+      expect(group_history.action).to eq(GroupHistory.actions[:add_user_to_group])
+      expect(group_history.acting_user).to eq(Discourse.system_user)
+      expect(group_history.target_user).to eq(user)
+    end
+
+    it "get attributes from the group" do
+      group = Fabricate(:group, automatic_membership_email_domains: "bar.com|wat.com", grant_trust_level: 1, title: "bars and wats", primary_group: true)
+      user = Fabricate.build(:user, trust_level: 0, email: "foo@bar.com", password: "strongpassword4Uguys")
+      user.password_required!
+      expect(user.save).to eq(true)
+      user.reload
+      expect(user.title).to eq("bars and wats")
+      expect(user.trust_level).to eq(1)
+      expect(user.trust_level_locked).to eq(true)
     end
 
   end
@@ -1236,47 +1280,130 @@ describe User do
   context "when user preferences are overriden" do
 
     before do
-      SiteSetting.stubs(:default_email_digest_frequency).returns(1) # daily
-      SiteSetting.stubs(:default_email_private_messages).returns(false)
-      SiteSetting.stubs(:default_email_direct).returns(false)
-      SiteSetting.stubs(:default_email_mailing_list_mode).returns(true)
-      SiteSetting.stubs(:default_email_always).returns(true)
+      SiteSetting.default_email_digest_frequency = 1440 # daily
+      SiteSetting.default_email_private_messages = false
+      SiteSetting.default_email_direct = false
+      SiteSetting.default_email_mailing_list_mode = true
+      SiteSetting.default_email_always = true
 
-      SiteSetting.stubs(:default_other_new_topic_duration_minutes).returns(-1) # not viewed
-      SiteSetting.stubs(:default_other_auto_track_topics_after_msecs).returns(0) # immediately
-      SiteSetting.stubs(:default_other_external_links_in_new_tab).returns(true)
-      SiteSetting.stubs(:default_other_enable_quoting).returns(false)
-      SiteSetting.stubs(:default_other_dynamic_favicon).returns(true)
-      SiteSetting.stubs(:default_other_disable_jump_reply).returns(true)
-      SiteSetting.stubs(:default_other_edit_history_public).returns(true)
+      SiteSetting.default_other_new_topic_duration_minutes = -1 # not viewed
+      SiteSetting.default_other_auto_track_topics_after_msecs = 0 # immediately
+      SiteSetting.default_other_notification_level_when_replying = 3 # immediately
+      SiteSetting.default_other_external_links_in_new_tab = true
+      SiteSetting.default_other_enable_quoting = false
+      SiteSetting.default_other_dynamic_favicon = true
+      SiteSetting.default_other_disable_jump_reply = true
 
-      SiteSetting.stubs(:default_categories_watching).returns("1")
-      SiteSetting.stubs(:default_categories_tracking).returns("2")
-      SiteSetting.stubs(:default_categories_muted).returns("3")
+      SiteSetting.default_topics_automatic_unpin = false
+
+      SiteSetting.default_categories_watching = "1"
+      SiteSetting.default_categories_tracking = "2"
+      SiteSetting.default_categories_muted = "3"
+      SiteSetting.default_categories_watching_first_post = "4"
     end
 
     it "has overriden preferences" do
       user = Fabricate(:user)
-
-      expect(user.digest_after_days).to eq(1)
-      expect(user.email_private_messages).to eq(false)
-      expect(user.email_direct).to eq(false)
-      expect(user.mailing_list_mode).to eq(true)
-      expect(user.email_always).to eq(true)
-
-      expect(user.new_topic_duration_minutes).to eq(-1)
-      expect(user.auto_track_topics_after_msecs).to eq(0)
-      expect(user.external_links_in_new_tab).to eq(true)
-      expect(user.enable_quoting).to eq(false)
-      expect(user.dynamic_favicon).to eq(true)
-      expect(user.disable_jump_reply).to eq(true)
-      expect(user.edit_history_public).to eq(true)
+      options = user.user_option
+      expect(options.email_always).to eq(true)
+      expect(options.mailing_list_mode).to eq(true)
+      expect(options.digest_after_minutes).to eq(1440)
+      expect(options.email_private_messages).to eq(false)
+      expect(options.external_links_in_new_tab).to eq(true)
+      expect(options.enable_quoting).to eq(false)
+      expect(options.dynamic_favicon).to eq(true)
+      expect(options.disable_jump_reply).to eq(true)
+      expect(options.automatically_unpin_topics).to eq(false)
+      expect(options.email_direct).to eq(false)
+      expect(options.new_topic_duration_minutes).to eq(-1)
+      expect(options.auto_track_topics_after_msecs).to eq(0)
+      expect(options.notification_level_when_replying).to eq(3)
 
       expect(CategoryUser.lookup(user, :watching).pluck(:category_id)).to eq([1])
       expect(CategoryUser.lookup(user, :tracking).pluck(:category_id)).to eq([2])
       expect(CategoryUser.lookup(user, :muted).pluck(:category_id)).to eq([3])
+      expect(CategoryUser.lookup(user, :watching_first_post).pluck(:category_id)).to eq([4])
+    end
+
+    it "does not set category preferences for staged users" do
+      user = Fabricate(:user, staged: true)
+      expect(CategoryUser.lookup(user, :watching).pluck(:category_id)).to eq([])
+      expect(CategoryUser.lookup(user, :tracking).pluck(:category_id)).to eq([])
+      expect(CategoryUser.lookup(user, :muted).pluck(:category_id)).to eq([])
+      expect(CategoryUser.lookup(user, :watching_first_post).pluck(:category_id)).to eq([])
+    end
+  end
+
+  context UserOption do
+
+    it "Creates a UserOption row when a user record is created and destroys once done" do
+      user = Fabricate(:user)
+      expect(user.user_option.email_always).to eq(false)
+
+      user_id = user.id
+      user.destroy!
+      expect(UserOption.find_by(user_id: user_id)).to eq(nil)
+
     end
 
   end
 
+  describe "#logged_out" do
+    let(:user) { Fabricate(:user) }
+
+    it 'should publish the right message' do
+      message = MessageBus.track_publish { user.logged_out }.first
+
+      expect(message.channel).to eq('/logout')
+      expect(message.data).to eq(user.id)
+    end
+  end
+
+  describe '#read_first_notification?' do
+    let(:user) { Fabricate(:user, trust_level: TrustLevel[0]) }
+    let(:notification) { Fabricate(:private_message_notification) }
+
+    describe 'when first notification has not been seen' do
+      it 'should return the right value' do
+        expect(user.read_first_notification?).to eq(false)
+      end
+    end
+
+    describe 'when first notification has been seen' do
+      it 'should return the right value' do
+        user.update_attributes!(seen_notification_id: notification.id)
+        expect(user.reload.read_first_notification?).to eq(true)
+      end
+    end
+
+    describe 'when user is not trust level 0' do
+      it 'should return the right value' do
+        user.update_attributes!(trust_level: TrustLevel[1])
+
+        expect(user.read_first_notification?).to eq(true)
+      end
+    end
+
+    describe 'when user is an old user' do
+      it 'should return the right value' do
+        user.update_attributes!(created_at: 1.year.ago)
+
+        expect(user.read_first_notification?).to eq(true)
+      end
+    end
+  end
+
+  describe "#featured_user_badges" do
+    let(:user) { Fabricate(:user) }
+    let!(:user_badge_tl1) { UserBadge.create(badge_id: 1, user: user, granted_by: Discourse.system_user, granted_at: Time.now) }
+    let!(:user_badge_tl2) { UserBadge.create(badge_id: 2, user: user, granted_by: Discourse.system_user, granted_at: Time.now) }
+
+    it 'should display highest trust level badge first' do
+      expect(user.featured_user_badges[0].badge_id).to eq(2)
+    end
+
+    it 'should display only 1 trust level badge' do
+      expect(user.featured_user_badges.length).to eq(1)
+    end
+  end
 end

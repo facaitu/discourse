@@ -1,3 +1,5 @@
+import Composer from 'discourse/models/composer';
+
 const DiscourseRoute = Ember.Route.extend({
 
   // Set to true to refresh a model without a transition if a query param
@@ -58,7 +60,7 @@ const DiscourseRoute = Ember.Route.extend({
       const composer = this.controllerFor('composer');
       if (!composer.get('model.viewOpen')) {
         composer.open({
-          action: Discourse.Composer.CREATE_TOPIC,
+          action: Composer.CREATE_TOPIC,
           draft: model.draft,
           draftKey: model.draft_key,
           draftSequence: model.draft_sequence
@@ -71,33 +73,5 @@ const DiscourseRoute = Ember.Route.extend({
     return (!transition._discourse_intercepted) && (!!transition.intent.url);
   }
 });
-
-export function cleanDOM() {
-  // Close mini profiler
-  $('.profiler-results .profiler-result').remove();
-
-  // Close some elements that may be open
-  $('header ul.icons li').removeClass('active');
-  $('[data-toggle="dropdown"]').parent().removeClass('open');
-  // close the lightbox
-  if ($.magnificPopup && $.magnificPopup.instance) {
-    $.magnificPopup.instance.close();
-    $('body').removeClass('mfp-zoom-out-cur');
-  }
-
-  // Remove any link focus
-  // NOTE: the '.not("body")' is here to prevent a bug in IE10 on Win7
-  // cf. https://stackoverflow.com/questions/5657371/ie9-window-loses-focus-due-to-jquery-mobile
-  $(document.activeElement).not("body").not(".no-blur").blur();
-
-  Discourse.set('notifyCount',0);
-  $('#discourse-modal').modal('hide');
-  const hideDropDownFunction = $('html').data('hide-dropdown');
-  if (hideDropDownFunction) { hideDropDownFunction(); }
-
-  // TODO: Avoid container lookup here
-  const appEvents = Discourse.__container__.lookup('app-events:main');
-  appEvents.trigger('dom:clean');
-}
 
 export default DiscourseRoute;

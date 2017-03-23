@@ -9,10 +9,15 @@ class CategorySerializer < BasicCategorySerializer
              :email_in,
              :email_in_allow_strangers,
              :suppress_from_homepage,
+             :all_topics_wiki,
              :can_delete,
              :cannot_delete_reason,
+             :is_special,
              :allow_badges,
-             :custom_fields
+             :custom_fields,
+             :allowed_tags,
+             :allowed_tag_groups,
+             :topic_featured_link_allowed
 
   def group_permissions
     @group_permissions ||= begin
@@ -34,6 +39,15 @@ class CategorySerializer < BasicCategorySerializer
   end
 
   def can_delete
+    true
+  end
+
+  def include_is_special?
+    [SiteSetting.lounge_category_id, SiteSetting.meta_category_id, SiteSetting.staff_category_id, SiteSetting.uncategorized_category_id]
+    .include? object.id
+  end
+
+  def is_special
     true
   end
 
@@ -61,4 +75,25 @@ class CategorySerializer < BasicCategorySerializer
     scope && scope.can_edit?(object)
   end
 
+  def notification_level
+   user = scope && scope.user
+   object.notification_level ||
+     (user && CategoryUser.where(user: user, category: object).first.try(:notification_level))
+  end
+
+  def include_allowed_tags?
+    SiteSetting.tagging_enabled
+  end
+
+  def allowed_tags
+    object.tags.pluck(:name)
+  end
+
+  def include_allowed_tag_groups?
+    SiteSetting.tagging_enabled
+  end
+
+  def allowed_tag_groups
+    object.tag_groups.pluck(:name)
+  end
 end

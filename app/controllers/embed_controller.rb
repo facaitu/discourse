@@ -1,11 +1,24 @@
 class EmbedController < ApplicationController
   skip_before_filter :check_xhr, :preload_json, :verify_authenticity_token
-  before_filter :ensure_embeddable
+
+  before_filter :ensure_embeddable, except: [ :info ]
+  before_filter :ensure_api_request, only: [ :info ]
 
   layout 'embed'
 
+  rescue_from Discourse::InvalidAccess do
+    response.headers['X-Frame-Options'] = "ALLOWALL"
+    if current_user.try(:admin?)
+      @setup_url = "#{Discourse.base_url}/admin/customize/embedding"
+      @show_reason = true
+      @hosts = EmbeddableHost.all
+    end
+    render 'embed_error'
+  end
+
   def comments
     embed_url = params[:embed_url]
+    embed_username = params[:discourse_username]
 
     topic_id = nil
     if embed_url.present?
@@ -19,7 +32,8 @@ class EmbedController < ApplicationController
                                   current_user,
                                   limit: SiteSetting.embed_post_limit,
                                   exclude_first: true,
-                                  exclude_deleted_users: true)
+                                  exclude_deleted_users: true,
+                                  exclude_hidden: true)
 
       @second_post_url = "#{@topic_view.topic.url}/2" if @topic_view
       @posts_left = 0
@@ -27,12 +41,31 @@ class EmbedController < ApplicationController
         @posts_left = @topic_view.topic.posts_count - SiteSetting.embed_post_limit - 1
       end
 
+      if @topic_view
+        @reply_count = @topic_view.topic.posts_count - 1
+        @reply_count = 0 if @reply_count < 0
+      end
+
     elsif embed_url.present?
-      Jobs.enqueue(:retrieve_topic, user_id: current_user.try(:id), embed_url: embed_url)
+      Jobs.enqueue(:retrieve_topic,
+                      user_id: current_user.try(:id),
+                      embed_url: embed_url,
+                      author_username: embed_username,
+                      referer: request.env['HTTP_REFERER']
+                  )
       render 'loading'
     end
 
     discourse_expires_in 1.minute
+  end
+
+  def info
+    embed_url = params.require(:embed_url)
+    @topic_embed = TopicEmbed.where(embed_url: embed_url).first
+
+    raise Discourse::NotFound if @topic_embed.nil?
+
+    render_serialized(@topic_embed, TopicEmbedSerializer, root: false)
   end
 
   def count
@@ -46,7 +79,11 @@ class EmbedController < ApplicationController
       topic_embeds.each do |te|
         url = te.embed_url
         url = "#{url}#discourse-comments" unless params[:embed_url].include?(url)
-        by_url[url] = I18n.t('embed.replies', count: te.topic.posts_count - 1)
+        if te.topic.present?
+          by_url[url] = I18n.t('embed.replies', count: te.topic.posts_count - 1)
+        else
+          by_url[url] = I18n.t('embed.replies', count: 0)
+        end
       end
     end
 
@@ -55,10 +92,14 @@ class EmbedController < ApplicationController
 
   private
 
+    def ensure_api_request
+      raise Discourse::InvalidAccess.new('api key not set') if !is_api?
+    end
+
     def ensure_embeddable
 
       if !(Rails.env.development? && current_user.try(:admin?))
-        raise Discourse::InvalidAccess.new('invalid referer host') unless EmbeddableHost.host_allowed?(request.referer)
+        raise Discourse::InvalidAccess.new('invalid referer host') unless EmbeddableHost.url_allowed?(request.referer)
       end
 
       response.headers['X-Frame-Options'] = "ALLOWALL"

@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'topic_view'
 
 describe TopicView do
@@ -13,6 +13,7 @@ describe TopicView do
     expect { TopicView.new(1231232, coding_horror) }.to raise_error(Discourse::NotFound)
   end
 
+  # see also spec/controllers/topics_controller_spec.rb TopicsController::show::permission errors
   it "raises an error if the user can't see the topic" do
     Guardian.any_instance.expects(:can_see?).with(topic).returns(false)
     expect { topic_view }.to raise_error(Discourse::InvalidAccess)
@@ -21,7 +22,7 @@ describe TopicView do
   it "handles deleted topics" do
     admin = Fabricate(:admin)
     topic.trash!(admin)
-    expect { TopicView.new(topic.id, Fabricate(:user)) }.to raise_error(Discourse::NotFound)
+    expect { TopicView.new(topic.id, Fabricate(:user)) }.to raise_error(Discourse::InvalidAccess)
     expect { TopicView.new(topic.id, admin) }.not_to raise_error
   end
 
@@ -34,6 +35,11 @@ describe TopicView do
       tv = TopicView.new(topic.id, coding_horror, slow_platform: true)
       expect(tv.chunk_size).to eq(TopicView.slow_chunk_size)
     end
+
+    it "returns `print_chunk_size` when print param is true" do
+      tv = TopicView.new(topic.id, coding_horror, print: true)
+      expect(tv.chunk_size).to eq(TopicView.print_chunk_size)
+    end
   end
 
   context "with a few sample posts" do
@@ -42,8 +48,8 @@ describe TopicView do
     let!(:p3) { Fabricate(:post, topic: topic, user: first_poster, percent_rank: 0 )}
 
     let(:moderator) { Fabricate(:moderator) }
-    let(:admin) { Fabricate(:admin)
-    }
+    let(:admin) { Fabricate(:admin) }
+
     it "it can find the best responses" do
 
       best2 = TopicView.new(topic.id, coding_horror, best: 2)
@@ -249,6 +255,23 @@ describe TopicView do
       end
     end
 
+  end
+
+  context 'whispers' do
+    it "handles their visibility properly" do
+      p1 = Fabricate(:post, topic: topic, user: coding_horror)
+      p2 = Fabricate(:post, topic: topic, user: coding_horror, post_type: Post.types[:whisper])
+      p3 = Fabricate(:post, topic: topic, user: coding_horror)
+
+      ch_posts = TopicView.new(topic.id, coding_horror).posts
+      expect(ch_posts.map(&:id)).to eq([p1.id, p2.id, p3.id])
+
+      anon_posts = TopicView.new(topic.id).posts
+      expect(anon_posts.map(&:id)).to eq([p1.id, p3.id])
+
+      admin_posts = TopicView.new(topic.id, Fabricate(:moderator)).posts
+      expect(admin_posts.map(&:id)).to eq([p1.id, p2.id, p3.id])
+    end
   end
 
   context '.posts' do

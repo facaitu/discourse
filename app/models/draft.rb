@@ -59,11 +59,12 @@ end
 #
 #  id         :integer          not null, primary key
 #  user_id    :integer          not null
-#  draft_key  :string(255)      not null
+#  draft_key  :string           not null
 #  data       :text             not null
 #  created_at :datetime         not null
 #  updated_at :datetime         not null
 #  sequence   :integer          default(0), not null
+#  revisions  :integer          default(1), not null
 #
 # Indexes
 #

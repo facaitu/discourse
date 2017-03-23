@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'email'
 
 describe Email::Styles do
@@ -95,6 +95,12 @@ describe Email::Styles do
       expect(frag.at('iframe')).to be_blank
       expect(frag.at('a')).to be_blank
     end
+
+    it "won't allow empty iframe src, strips them with no link" do
+      frag = html_fragment("<iframe src=''></iframe>")
+      expect(frag.at('iframe')).to be_blank
+      expect(frag.at('a')).to be_blank
+    end
   end
 
   context "rewriting protocol relative URLs to the forum" do
@@ -105,7 +111,7 @@ describe Email::Styles do
 
     context "without https" do
       before do
-        SiteSetting.stubs(:use_https).returns(false)
+        SiteSetting.stubs(:force_https).returns(false)
       end
 
       it "rewrites the href to have http" do
@@ -126,7 +132,7 @@ describe Email::Styles do
 
     context "with https" do
       before do
-        SiteSetting.stubs(:use_https).returns(true)
+        SiteSetting.stubs(:force_https).returns(true)
       end
 
       it "rewrites the forum URL to have https" do
@@ -163,5 +169,11 @@ describe Email::Styles do
     end
   end
 
+  context "onebox_styles" do
+    it "renders quote as <blockquote>" do
+      fragment = html_fragment('<aside class="quote"> <div class="title"> <div class="quote-controls"> <i class="fa fa-chevron-down" title="expand/collapse"></i><a href="/t/xyz/123" title="go to the quoted post" class="back"></a> </div> <img alt="" width="20" height="20" src="https://cdn-enterprise.discourse.org/boingboing/user_avatar/bbs.boingboing.net/techapj/40/54379_1.png" class="avatar">techAPJ: </div> <blockquote> <p>lorem ipsum</p> </blockquote> </aside>')
+      expect(fragment.to_s.squish).to match(/^<blockquote.+<\/blockquote>$/)
+    end
+  end
 
 end

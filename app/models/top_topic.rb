@@ -1,3 +1,5 @@
+require_dependency "distributed_memoizer"
+
 class TopTopic < ActiveRecord::Base
 
   belongs_to :topic
@@ -34,6 +36,17 @@ class TopTopic < ActiveRecord::Base
   def self.periods
     @@periods ||= [:all, :yearly, :quarterly, :monthly, :weekly, :daily].freeze
   end
+
+  def self.sorted_periods
+    ascending_periods ||= Enum.new(daily: 1,
+                                   weekly: 2,
+                                   monthly: 3,
+                                   quarterly: 4,
+                                   yearly: 5,
+                                   all: 6)
+  end
+
+  private
 
   def self.sort_orders
     @@sort_orders ||= [:posts, :views, :likes, :op_likes].freeze
@@ -130,6 +143,15 @@ class TopTopic < ActiveRecord::Base
 
   def self.compute_top_score_for(period)
 
+    log_views_multiplier = SiteSetting.top_topics_formula_log_views_multiplier.to_f
+    log_views_multiplier = 2 if log_views_multiplier == 0
+
+    first_post_likes_multiplier = SiteSetting.top_topics_formula_first_post_likes_multiplier.to_f
+    first_post_likes_multiplier = 0.5 if first_post_likes_multiplier == 0
+
+    least_likes_per_post_multiplier = SiteSetting.top_topics_formula_least_likes_per_post_multiplier.to_f
+    least_likes_per_post_multiplier = 3 if least_likes_per_post_multiplier == 0
+
     if period == :all
       top_topics = "(
         SELECT t.like_count all_likes_count,
@@ -150,11 +172,11 @@ class TopTopic < ActiveRecord::Base
         WITH top AS (
           SELECT CASE
                    WHEN #{time_filter} THEN 0
-                   ELSE log(GREATEST(#{period}_views_count, 1)) * 2 +
-                        #{period}_op_likes_count * 0.5 +
+                   ELSE log(GREATEST(#{period}_views_count, 1)) * #{log_views_multiplier} +
+                        #{period}_op_likes_count * #{first_post_likes_multiplier} +
                         CASE WHEN #{period}_likes_count > 0 AND #{period}_posts_count > 0
                            THEN
-                            LEAST(#{period}_likes_count / #{period}_posts_count, 3)
+                            LEAST(#{period}_likes_count / #{period}_posts_count, #{least_likes_per_post_multiplier})
                            ELSE 0
                         END +
                         CASE WHEN topics.posts_count < 10 THEN
@@ -198,10 +220,6 @@ class TopTopic < ActiveRecord::Base
                   AND tt.#{period}_#{sort}_count <> c.count",
              from: start_of(period))
   end
-
-  private_class_method :sort_orders, :update_counts_and_compute_scores_for, :remove_invisible_topics,
-                       :add_new_visible_topics, :update_posts_count_for, :update_views_count_for, :update_likes_count_for,
-                       :compute_top_score_for, :start_of, :update_top_topics
 end
 
 # == Schema Information
@@ -239,13 +257,16 @@ end
 #
 # Indexes
 #
+#  index_top_topics_on_all_score                 (all_score)
 #  index_top_topics_on_daily_likes_count         (daily_likes_count)
 #  index_top_topics_on_daily_op_likes_count      (daily_op_likes_count)
 #  index_top_topics_on_daily_posts_count         (daily_posts_count)
+#  index_top_topics_on_daily_score               (daily_score)
 #  index_top_topics_on_daily_views_count         (daily_views_count)
 #  index_top_topics_on_monthly_likes_count       (monthly_likes_count)
 #  index_top_topics_on_monthly_op_likes_count    (monthly_op_likes_count)
 #  index_top_topics_on_monthly_posts_count       (monthly_posts_count)
+#  index_top_topics_on_monthly_score             (monthly_score)
 #  index_top_topics_on_monthly_views_count       (monthly_views_count)
 #  index_top_topics_on_quarterly_likes_count     (quarterly_likes_count)
 #  index_top_topics_on_quarterly_op_likes_count  (quarterly_op_likes_count)
@@ -255,9 +276,11 @@ end
 #  index_top_topics_on_weekly_likes_count        (weekly_likes_count)
 #  index_top_topics_on_weekly_op_likes_count     (weekly_op_likes_count)
 #  index_top_topics_on_weekly_posts_count        (weekly_posts_count)
+#  index_top_topics_on_weekly_score              (weekly_score)
 #  index_top_topics_on_weekly_views_count        (weekly_views_count)
 #  index_top_topics_on_yearly_likes_count        (yearly_likes_count)
 #  index_top_topics_on_yearly_op_likes_count     (yearly_op_likes_count)
 #  index_top_topics_on_yearly_posts_count        (yearly_posts_count)
+#  index_top_topics_on_yearly_score              (yearly_score)
 #  index_top_topics_on_yearly_views_count        (yearly_views_count)
 #

@@ -4,6 +4,9 @@ require_dependency 'file_helper'
 module Jobs
 
   class PullHotlinkedImages < Jobs::Base
+
+    sidekiq_options queue: 'low'
+
     def initialize
       # maximum size of the file in bytes
       @max_size = SiteSetting.max_image_size_kb.kilobytes
@@ -60,10 +63,14 @@ module Jobs
               raw.gsub!(/\[!\[([^\]]*)\]\(#{escaped_src}\)\]/) { "[<img src='#{url}' alt='#{$1}'>]" }
               # Markdown inline - ![alt](http://...)
               raw.gsub!(/!\[([^\]]*)\]\(#{escaped_src}\)/) { "![#{$1}](#{url})" }
+              # Markdown inline - ![](http://... "image title")
+              raw.gsub!(/!\[\]\(#{escaped_src} "([^\]]*)"\)/) { "![](#{url})" }
+              # Markdown inline - ![alt](http://... "image title")
+              raw.gsub!(/!\[([^\]]*)\]\(#{escaped_src} "([^\]]*)"\)/) { "![](#{url})" }
               # Markdown reference - [x]: http://
-              raw.gsub!(/\[(\d+)\]: #{escaped_src}/) { "[#{$1}]: #{url}" }
+              raw.gsub!(/\[([^\]]+)\]:\s?#{escaped_src}/) { "[#{$1}]: #{url}" }
               # Direct link
-              raw.gsub!(src, "<img src='#{url}'>")
+              raw.gsub!(/^#{escaped_src}(\s?)$/) { "<img src='#{url}'>#{$1}" }
             end
           rescue => e
             Rails.logger.info("Failed to pull hotlinked image: #{src} post:#{post_id}\n" + e.message + "\n" + e.backtrace.join("\n"))
@@ -76,12 +83,7 @@ module Jobs
       end
 
       post.reload
-      if start_raw != post.raw
-        # post was edited - start over (after 10 minutes)
-        backoff = args.fetch(:backoff, 1) + 1
-        delay = SiteSetting.ninja_edit_window * args[:backoff]
-        Jobs.enqueue_in(delay.seconds.to_i, :pull_hotlinked_images, args.merge!(backoff: backoff))
-      elsif raw != post.raw
+      if start_raw == post.raw && raw != post.raw
         changes = { raw: raw, edit_reason: I18n.t("upload.edit_reason") }
         # we never want that job to bump the topic
         options = { bypass_bump: true }

@@ -1,4 +1,22 @@
-require 'spec_helper'
+require 'rails_helper'
+
+def topics_controller_show_gen_perm_tests(expected, ctx)
+  expected.each do |sym, status|
+    params = "topic_id: #{sym}.id, slug: #{sym}.slug"
+    if sym == :nonexist
+      params = "topic_id: nonexist_topic_id"
+    end
+    ctx.instance_eval("
+it 'returns #{status} for #{sym}' do
+  begin
+    xhr :get, :show, #{params}
+    expect(response.status).to eq(#{status})
+  rescue Discourse::NotLoggedIn
+    expect(302).to eq(#{status})
+  end
+end")
+  end
+end
 
 describe TopicsController do
 
@@ -9,6 +27,8 @@ describe TopicsController do
     let!(:p2) { Fabricate(:post, topic: topic, user:user )}
 
     it "returns the JSON in the format our wordpress plugin needs" do
+      SiteSetting.external_system_avatars_enabled = false
+
       xhr :get, :wordpress, topic_id: topic.id, best: 3
       expect(response).to be_success
       json = ::JSON.parse(response.body)
@@ -501,6 +521,34 @@ describe TopicsController do
     end
   end
 
+  describe 'show full render' do
+    render_views
+
+    it 'correctly renders canoicals' do
+      topic = Fabricate(:post).topic
+      get :show, topic_id: topic.id, slug: topic.slug
+      expect(response).to be_success
+      expect(css_select("link[rel=canonical]").length).to eq(1)
+      expect(response.headers["Cache-Control"]).to eq("no-store, must-revalidate, no-cache, private")
+    end
+  end
+
+  describe 'show unlisted' do
+    it 'returns 404 unless exact correct URL' do
+      topic = Fabricate(:topic, visible: false)
+      Fabricate(:post, topic: topic)
+
+      xhr :get, :show, topic_id: topic.id, slug: topic.slug
+      expect(response).to be_success
+
+      xhr :get, :show, topic_id: topic.id, slug: "just-guessing"
+      expect(response.code).to eq("404")
+
+      xhr :get, :show, id: topic.slug
+      expect(response.code).to eq("404")
+    end
+  end
+
   describe 'show' do
 
     let(:topic) { Fabricate(:post).topic }
@@ -522,6 +570,15 @@ describe TopicsController do
       expect(response).to redirect_to(topic.relative_url)
     end
 
+    it 'can find a topic when a slug has a number in front' do
+      another_topic = Fabricate(:post).topic
+
+      topic.update_column(:slug, "#{another_topic.id}-reasons-discourse-is-awesome")
+      xhr :get, :show, id: "#{another_topic.id}-reasons-discourse-is-awesome"
+
+      expect(response).to redirect_to(topic.relative_url)
+    end
+
     it 'keeps the post_number parameter around when redirecting' do
       xhr :get, :show, id: topic.slug, post_number: 42
       expect(response).to redirect_to(topic.relative_url + "/42")
@@ -532,6 +589,11 @@ describe TopicsController do
       expect(response).to redirect_to(topic.relative_url + "/42?page=123")
     end
 
+    it 'does not accept page params as an array' do
+      xhr :get, :show, id: topic.slug, post_number: 42, page: [2]
+      expect(response).to redirect_to("#{topic.relative_url}/42?page=1")
+    end
+
     it 'returns 404 when an invalid slug is given and no id' do
       xhr :get, :show, id: 'nope-nope'
       expect(response.status).to eq(404)
@@ -539,6 +601,11 @@ describe TopicsController do
 
     it 'returns a 404 when slug and topic id do not match a topic' do
       xhr :get, :show, topic_id: 123123, slug: 'topic-that-is-made-up'
+      expect(response.status).to eq(404)
+    end
+
+    it 'returns a 404 for an ID that is larger than postgres limits' do
+      xhr :get, :show, topic_id: 50142173232201640412, slug: 'topic-that-is-made-up'
       expect(response.status).to eq(404)
     end
 
@@ -554,6 +621,122 @@ describe TopicsController do
       end
     end
 
+    context 'permission errors' do
+      let(:allowed_user) { Fabricate(:user) }
+      let(:allowed_group) { Fabricate(:group) }
+      let(:secure_category) {
+        c = Fabricate(:category)
+        c.permissions = [[allowed_group, :full]]
+        c.save
+        allowed_user.groups = [allowed_group]
+        allowed_user.save
+        c }
+      let(:normal_topic) { Fabricate(:topic) }
+      let(:secure_topic) { Fabricate(:topic, category: secure_category) }
+      let(:private_topic) { Fabricate(:private_message_topic, user: allowed_user) }
+      let(:deleted_topic) { Fabricate(:deleted_topic) }
+      let(:deleted_secure_topic) { Fabricate(:topic, category: secure_category, deleted_at: 1.day.ago) }
+      let(:deleted_private_topic) { Fabricate(:private_message_topic, user: allowed_user, deleted_at: 1.day.ago) }
+      let(:nonexist_topic_id) { Topic.last.id + 10000 }
+
+      context 'anonymous' do
+        expected = {
+          :normal_topic => 200,
+          :secure_topic => 403,
+          :private_topic => 302,
+          :deleted_topic => 410,
+          :deleted_secure_topic => 403,
+          :deleted_private_topic => 302,
+          :nonexist => 404
+        }
+        topics_controller_show_gen_perm_tests(expected, self)
+      end
+
+      context 'anonymous with login required' do
+        before do
+          SiteSetting.login_required = true
+        end
+        expected = {
+          :normal_topic => 302,
+          :secure_topic => 302,
+          :private_topic => 302,
+          :deleted_topic => 302,
+          :deleted_secure_topic => 302,
+          :deleted_private_topic => 302,
+          :nonexist => 302
+        }
+        topics_controller_show_gen_perm_tests(expected, self)
+      end
+
+      context 'normal user' do
+        before do
+          log_in(:user)
+        end
+
+        expected = {
+          :normal_topic => 200,
+          :secure_topic => 403,
+          :private_topic => 403,
+          :deleted_topic => 410,
+          :deleted_secure_topic => 403,
+          :deleted_private_topic => 403,
+          :nonexist => 404
+        }
+        topics_controller_show_gen_perm_tests(expected, self)
+      end
+
+      context 'allowed user' do
+        before do
+          log_in_user(allowed_user)
+        end
+
+        expected = {
+          :normal_topic => 200,
+          :secure_topic => 200,
+          :private_topic => 200,
+          :deleted_topic => 410,
+          :deleted_secure_topic => 410,
+          :deleted_private_topic => 410,
+          :nonexist => 404
+        }
+        topics_controller_show_gen_perm_tests(expected, self)
+      end
+
+      context 'moderator' do
+        before do
+          log_in(:moderator)
+        end
+
+        expected = {
+          :normal_topic => 200,
+          :secure_topic => 403,
+          :private_topic => 403,
+          :deleted_topic => 200,
+          :deleted_secure_topic => 403,
+          :deleted_private_topic => 403,
+          :nonexist => 404
+        }
+        topics_controller_show_gen_perm_tests(expected, self)
+      end
+
+      context 'admin' do
+        before do
+          log_in(:admin)
+        end
+
+        expected = {
+          :normal_topic => 200,
+          :secure_topic => 200,
+          :private_topic => 200,
+          :deleted_topic => 200,
+          :deleted_secure_topic => 200,
+          :deleted_private_topic => 200,
+          :nonexist => 404
+        }
+        topics_controller_show_gen_perm_tests(expected, self)
+      end
+    end
+
     it 'records a view' do
       expect { xhr :get, :show, topic_id: topic.id, slug: topic.slug }.to change(TopicViewItem, :count).by(1)
     end
@@ -563,6 +746,21 @@ describe TopicsController do
       get :show, topic_id: topic.id, slug: topic.slug, u: user.username
 
       expect(IncomingLink.count).to eq(1)
+    end
+
+    context 'print' do
+
+      it "doesn't renders the print view when disabled" do
+        SiteSetting.max_prints_per_hour_per_user = 0
+        get :show, topic_id: topic.id, slug: topic.slug, print: true
+        expect(response).to be_forbidden
+      end
+
+      it 'renders the print view when enabled' do
+        SiteSetting.max_prints_per_hour_per_user = 10
+        get :show, topic_id: topic.id, slug: topic.slug, print: true
+        expect(response).to be_successful
+      end
     end
 
     it 'records redirects' do
@@ -653,6 +851,16 @@ describe TopicsController do
           expect(response.code.to_i).to be(403)
         end
       end
+    end
+  end
+
+  describe '#posts' do
+    let(:topic) { Fabricate(:post).topic }
+
+    it 'returns first posts of the topic' do
+      get :posts, topic_id: topic.id, format: :json
+      expect(response).to be_success
+      expect(response.content_type).to eq('application/json')
     end
   end
 
@@ -767,6 +975,35 @@ describe TopicsController do
     end
   end
 
+  describe 'invite_group' do
+    let :admins do
+      Group[:admins]
+    end
+
+    let! :admin do
+      log_in :admin
+    end
+
+    before do
+      admins.alias_level = Group::ALIAS_LEVELS[:everyone]
+      admins.save!
+    end
+
+    it "disallows inviting a group to a topic" do
+      topic = Fabricate(:topic)
+      xhr :post, :invite_group, topic_id: topic.id, group: 'admins'
+      expect(response.status).to eq(422)
+    end
+
+    it "allows inviting a group to a PM" do
+      topic = Fabricate(:private_message_topic)
+      xhr :post, :invite_group, topic_id: topic.id, group: 'admins'
+
+      expect(response.status).to eq(200)
+      expect(topic.allowed_groups.first.id).to eq(admins.id)
+    end
+  end
+
   describe 'invite' do
 
     describe "group invites" do
@@ -792,7 +1029,7 @@ describe TopicsController do
 
     describe 'when logged in as group manager' do
       let(:group_manager) { log_in }
-      let(:group) { Fabricate(:group).tap { |g| g.add(group_manager); g.appoint_manager(group_manager) } }
+      let(:group) { Fabricate(:group).tap { |g| g.add_owner(group_manager) } }
       let(:private_category)  { Fabricate(:private_category, group: group) }
       let(:group_private_topic) { Fabricate(:topic, category: private_category, user: group_manager) }
       let(:recipient) { 'jake@adventuretime.ooo' }
@@ -877,6 +1114,46 @@ describe TopicsController do
         Topic.any_instance.expects(:set_auto_close).with(nil, anything)
         xhr :put, :autoclose, topic_id: @topic.id, auto_close_time: nil, auto_close_based_on_last_post: false, timezone_offset: -240
       end
+
+      it "will close a topic when the time expires" do
+        topic = Fabricate(:topic)
+        Timecop.freeze(20.hours.ago) do
+          create_post(topic: topic, raw: "This is the body of my cool post in the topic, but it's a bit old now")
+        end
+        topic.save
+
+        Jobs.expects(:enqueue_at).at_least_once
+        xhr :put, :autoclose, topic_id: topic.id, auto_close_time: 24, auto_close_based_on_last_post: true
+
+        topic.reload
+        expect(topic.closed).to eq(false)
+        expect(topic.posts.last.raw).to match(/cool post/)
+
+        Timecop.freeze(5.hours.from_now) do
+          Jobs::CloseTopic.new.execute({topic_id: topic.id, user_id: @admin.id})
+        end
+
+        topic.reload
+        expect(topic.closed).to eq(true)
+        expect(topic.posts.last.raw).to match(/automatically closed/)
+      end
+
+      it "will immediately close if the last post is old enough" do
+        topic = Fabricate(:topic)
+        Timecop.freeze(20.hours.ago) do
+          create_post(topic: topic)
+        end
+        topic.save
+        Topic.reset_highest(topic.id)
+        topic.reload
+
+        xhr :put, :autoclose, topic_id: topic.id, auto_close_time: 10, auto_close_based_on_last_post: true
+
+        topic.reload
+        expect(topic.closed).to eq(true)
+        expect(topic.posts.last.raw).to match(/after the last reply/)
+        expect(topic.posts.last.raw).to match(/10 hours/)
+      end
     end
 
   end
@@ -947,9 +1224,15 @@ describe TopicsController do
         expect { xhr :put, :bulk, topic_ids: topic_ids, operation: {}}.to raise_error(ActionController::ParameterMissing)
       end
 
+      it "can find unread" do
+        # mark all unread muted
+        xhr :put, :bulk, filter: 'unread', operation: {type: :change_notification_level, notification_level_id: 0}
+        expect(response.status).to eq(200)
+      end
+
       it "delegates work to `TopicsBulkAction`" do
         topics_bulk_action = mock
-        TopicsBulkAction.expects(:new).with(user, topic_ids, operation).returns(topics_bulk_action)
+        TopicsBulkAction.expects(:new).with(user, topic_ids, operation, group: nil).returns(topics_bulk_action)
         topics_bulk_action.expects(:perform!)
         xhr :put, :bulk, topic_ids: topic_ids, operation: operation
       end
@@ -971,6 +1254,15 @@ describe TopicsController do
 
       xhr :put, :remove_bookmarks, topic_id: post.topic_id
       expect(PostAction.where(user_id: user.id, post_action_type: bookmark).count).to eq(0)
+    end
+
+    it "should disallow bookmarks on posts you have no access to" do
+      log_in
+      user = Fabricate(:user)
+      pm = create_post(user: user, archetype: 'private_message', target_usernames: [user.username])
+
+      xhr :put, :bookmark, topic_id: pm.topic_id
+      expect(response).to be_forbidden
     end
   end
 
@@ -1028,4 +1320,93 @@ describe TopicsController do
       expect(response.headers['X-Robots-Tag']).to eq(nil)
     end
   end
+
+  context "excerpts" do
+
+    it "can correctly get excerpts" do
+
+      first_post = create_post(raw: 'This is the first post :)', title: 'This is a test title I am making yay')
+      second_post = create_post(raw: 'This is second post', topic: first_post.topic)
+
+      random_post = Fabricate(:post)
+
+
+      xhr :get, :excerpts, topic_id: first_post.topic_id, post_ids: [first_post.id, second_post.id, random_post.id]
+
+      json = JSON.parse(response.body)
+      json.sort!{|a,b| a["post_id"] <=> b["post_id"]}
+
+      # no random post
+      expect(json.length).to eq(2)
+      # keep emoji images
+      expect(json[0]["excerpt"]).to match(/emoji/)
+      expect(json[0]["excerpt"]).to match(/first post/)
+      expect(json[0]["username"]).to eq(first_post.user.username)
+      expect(json[0]["post_id"]).to eq(first_post.id)
+
+      expect(json[1]["excerpt"]).to match(/second post/)
+
+
+    end
+
+  end
+
+  context "convert_topic" do
+    it 'needs you to be logged in' do
+      expect { xhr :put, :convert_topic, id: 111, type: "private" }.to raise_error(Discourse::NotLoggedIn)
+    end
+
+    describe 'converting public topic to private message' do
+      let(:user) { Fabricate(:user) }
+      let(:topic) { Fabricate(:topic, user: user) }
+
+      it "raises an error when the user doesn't have permission to convert topic" do
+        log_in
+        xhr :put, :convert_topic, id: topic.id, type: "private"
+        expect(response).to be_forbidden
+      end
+
+      context "success" do
+        before do
+          admin = log_in(:admin)
+          Topic.any_instance.expects(:convert_to_private_message).with(admin).returns(topic)
+          xhr :put, :convert_topic, id: topic.id, type: "private"
+        end
+
+        it "returns success" do
+          expect(response).to be_success
+          result = ::JSON.parse(response.body)
+          expect(result['success']).to eq(true)
+          expect(result['url']).to be_present
+        end
+      end
+    end
+
+    describe 'converting private message to public topic' do
+      let(:user) { Fabricate(:user) }
+      let(:topic) { Fabricate(:topic, user: user) }
+
+      it "raises an error when the user doesn't have permission to convert topic" do
+        log_in
+        xhr :put, :convert_topic, id: topic.id, type: "public"
+        expect(response).to be_forbidden
+      end
+
+      context "success" do
+        before do
+          admin = log_in(:admin)
+          Topic.any_instance.expects(:convert_to_public_topic).with(admin).returns(topic)
+          xhr :put, :convert_topic, id: topic.id, type: "public"
+        end
+
+        it "returns success" do
+          expect(response).to be_success
+          result = ::JSON.parse(response.body)
+          expect(result['success']).to eq(true)
+          expect(result['url']).to be_present
+        end
+      end
+    end
+  end
+
 end

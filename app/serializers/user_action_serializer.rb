@@ -26,14 +26,12 @@ class UserActionSerializer < ApplicationSerializer
              :action_code,
              :edit_reason,
              :category_id,
-             :uploaded_avatar_id,
              :closed,
-             :archived,
-             :acting_uploaded_avatar_id
+             :archived
 
   def excerpt
     cooked = object.cooked || PrettyText.cook(object.raw)
-    PrettyText.excerpt(cooked, 300, keep_emojis: true) if cooked
+    PrettyText.excerpt(cooked, 300, keep_emoji_images: true) if cooked
   end
 
   def avatar_template

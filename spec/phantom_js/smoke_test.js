@@ -9,7 +9,7 @@ if (system.args.length !== 2) {
   phantom.exit(1);
 }
 
-var TIMEOUT = 10000;
+var TIMEOUT = 15000;
 var page = require("webpage").create();
 
 page.viewportSize = {
@@ -17,9 +17,17 @@ page.viewportSize = {
   height: 768
 };
 
-// page.onConsoleMessage = function(msg) {
-//   console.log(msg);
-// }
+// In the browser, when the cookies are disabled, it also disables the localStorage
+// Here, we're mocking that behavior and making sure the application doesn't blow up
+page.onInitialized = function() {
+  page.evaluate(function() {
+    localStorage["disableLocalStorage"] = true;
+  });
+};
+
+page.onConsoleMessage = function(msg) {
+  console.log(msg);
+};
 
 page.waitFor = function(desc, fn, cb) {
   var start = +new Date();
@@ -37,6 +45,7 @@ page.waitFor = function(desc, fn, cb) {
     } else {
       if (diff > TIMEOUT) {
         console.log("FAILED: " + desc + " - " + diff + "ms");
+        page.render('/tmp/failed.png');
         cb(false);
       } else {
         setTimeout(check, 25);
@@ -50,27 +59,31 @@ page.waitFor = function(desc, fn, cb) {
 
 var actions = [];
 
-var test = function(desc, fn) {
+function test(desc, fn) {
   actions.push({ test: fn, desc: desc });
-}
+};
 
-var exec = function(desc, fn) {
+// function wait(delay) {
+//   actions.push({ wait: delay });
+// }
+
+function exec(desc, fn) {
   actions.push({ exec: fn, desc: desc });
-}
+};
 
-var execAsync = function(desc, delay, fn) {
+function execAsync(desc, delay, fn) {
   actions.push({ execAsync: fn, delay: delay, desc: desc });
-}
+};
 
-var upload = function(input, path) {
-  actions.push({ upload: path, input: input });
-}
+// function upload(input, path) {
+//   actions.push({ upload: path, input: input });
+// };
 
-// var screenshot = function(filename) {
+// function screenshot(filename) {
 //   actions.push({ screenshot: filename });
 // }
 
-var run = function() {
+function run() {
   var allPassed = true;
 
   var done = function() {
@@ -107,6 +120,11 @@ var run = function() {
         console.log("SCREENSHOT: " + action.screenshot);
         page.render(action.screenshot);
         performNextAction();
+      } else if (action.wait) {
+        console.log("WAIT: " + action.wait + "ms");
+        setTimeout(function() {
+          performNextAction();
+        }, action.wait);
       }
     }
   };
@@ -121,19 +139,15 @@ var runTests = function() {
   });
 
   test("at least one topic shows up", function() {
-    return document.querySelector(".topic-list tbody tr");
+    return $(".topic-list tbody tr").length;
   });
 
   execAsync("navigate to 1st topic", 500, function() {
-    if ($(".main-link > a:first").length > 0) {
-      $(".main-link > a:first").click(); // topic list page
-    } else {
-      $(".featured-topic a.title:first").click(); // categories page
-    }
+    $(".main-link a.title:first").click();
   });
 
   test("at least one post body", function() {
-    return document.querySelector(".topic-post");
+    return $(".topic-post").length;
   });
 
   execAsync("click on the 1st user", 500, function() {
@@ -143,7 +157,7 @@ var runTests = function() {
   });
 
   test("user has details", function() {
-    return document.querySelector("#user-card .names");
+    return $("#user-card .names").length;
   });
 
   exec("open login modal", function() {
@@ -151,7 +165,7 @@ var runTests = function() {
   });
 
   test("login modal is open", function() {
-    return document.querySelector(".login-modal");
+    return $(".login-modal").length;
   });
 
   exec("type in credentials & log in", function() {
@@ -161,7 +175,27 @@ var runTests = function() {
   });
 
   test("is logged in", function() {
-    return document.querySelector(".current-user");
+    return $(".current-user").length;
+  });
+
+  exec("go home", function() {
+    $('#site-logo').click();
+  });
+
+  test("it shows a topic list", function() {
+    return $(".topic-list").length;
+  });
+
+  test('we have a create topic button', function() {
+    return $("#create-topic").length;
+  });
+
+  exec("open composer", function() {
+    $("#create-topic").click();
+  });
+
+  test('the editor is visible', function() {
+    return $(".d-editor").length;
   });
 
   exec("compose new topic", function() {
@@ -169,36 +203,50 @@ var runTests = function() {
         title = "This is a new topic" + date,
         post = "I can write a new topic inside the smoke test!" + date + "\n\n";
 
-    $("#create-topic").click();
     $("#reply-title").val(title).trigger("change");
-    $("#reply-control .wmd-input").val(post).trigger("change");
-    $("#reply-control .wmd-input").focus()[0].setSelectionRange(post.length, post.length);
+    $("#reply-control .d-editor-input").val(post).trigger("change");
+    $("#reply-control .d-editor-input").focus()[0].setSelectionRange(post.length, post.length);
+  });
+
+  test("updates preview", function() {
+    return $(".d-editor-preview p").length;
   });
 
   exec("open upload modal", function() {
-    $(".wmd-image-button").click();
+    $(".d-editor-button-bar .upload").click();
   });
 
   test("upload modal is open", function() {
-    return document.querySelector("#filename-input");
+    return $("#filename-input").length;
   });
 
-  upload("#filename-input", "spec/fixtures/images/large & unoptimized.png");
+  // TODO: Looks like PhantomJS 2.0.0 has a bug with `uploadFile`
+  // which breaks this code.
 
-  exec("click upload button", function() {
-    $(".modal .btn-primary").click();
-  });
-
-  test("image is uploaded", function() {
-    return document.querySelector(".cooked img");
-  });
+  // upload("#filename-input", "spec/fixtures/images/large & unoptimized.png");
+  // test("the file is inserted into the input", function() {
+  //   return document.getElementById('filename-input').files.length
+  // });
+  // screenshot('/tmp/upload-modal.png');
+  //
+  // test("upload modal is open", function() {
+  //   return document.querySelector("#filename-input");
+  // });
+  //
+  // exec("click upload button", function() {
+  //   $(".modal .btn-primary").click();
+  // });
+  //
+  // test("image is uploaded", function() {
+  //   return document.querySelector(".cooked img");
+  // });
 
   exec("submit the topic", function() {
     $("#reply-control .create").click();
   });
 
   test("topic is created", function() {
-    return document.querySelector(".fancy-title");
+    return $(".fancy-title").length;
   });
 
   exec("click reply button", function() {
@@ -206,16 +254,16 @@ var runTests = function() {
   });
 
   test("composer is open", function() {
-    return document.querySelector("#reply-control .wmd-input");
+    return $("#reply-control .d-editor-input").length;
   });
 
   exec("compose reply", function() {
     var post = "I can even write a reply inside the smoke test ;) (" + (+new Date()) + ")";
-    $("#reply-control .wmd-input").val(post).trigger("change");
+    $("#reply-control .d-editor-input").val(post).trigger("change");
   });
 
   test("waiting for the preview", function() {
-    return $(".wmd-preview").text().trim().indexOf("I can even write") === 0;
+    return $(".d-editor-preview").text().trim().indexOf("I can even write") === 0;
   });
 
   execAsync("submit the reply", 6000, function() {
@@ -230,7 +278,9 @@ var runTests = function() {
   run();
 };
 
+phantom.clearCookies();
 page.open(system.args[1], function() {
+  page.evaluate(function() { localStorage.clear(); });
   console.log("OPENED: " + system.args[1]);
   runTests();
 });

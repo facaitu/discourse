@@ -3,7 +3,6 @@ import computed from 'ember-addons/ember-computed-decorators';
 export default Ember.Controller.extend({
   showTop: true,
   showFooter: false,
-  styleCategory: null,
 
   @computed
   canSignUp() {
@@ -16,4 +15,10 @@ export default Ember.Controller.extend({
   loginRequired() {
     return Discourse.SiteSettings.login_required && !Discourse.User.current();
   },
+
+  actions: {
+    appRouteAction(name) {
+      return this.send(name);
+    }
+  }
 });

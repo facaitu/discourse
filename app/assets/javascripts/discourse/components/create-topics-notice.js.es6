@@ -36,7 +36,10 @@ export default Ember.Component.extend({
 
   @computed()
   shouldSee() {
-    return Discourse.User.currentProp('admin') && this.siteSettings.show_create_topics_notice;
+    const user = this.currentUser;
+    return user && user.get('admin') &&
+           this.siteSettings.show_create_topics_notice &&
+           !this.site.get('wizard_required');
   },
 
   @computed('enabled', 'shouldSee', 'publicTopicCount', 'publicPostCount')
@@ -46,7 +49,17 @@ export default Ember.Component.extend({
 
   @computed('publicTopicCount', 'publicPostCount', 'topicTrackingState.incomingCount')
   message() {
-    return new Handlebars.SafeString(I18n.t('too_few_topics_notice', {
+    var msg = null;
+
+    if(this.get('publicTopicCount') < this.get('requiredTopics') && this.get('publicPostCount') < this.get('requiredPosts')) {
+      msg = 'too_few_topics_and_posts_notice';
+    } else if (this.get('publicTopicCount') < this.get('requiredTopics')) {
+      msg = 'too_few_topics_notice';
+    } else {
+      msg = 'too_few_posts_notice';
+    }
+
+    return new Handlebars.SafeString(I18n.t(msg, {
       requiredTopics: this.get('requiredTopics'),
       requiredPosts:  this.get('requiredPosts'),
       currentTopics:  this.get('publicTopicCount'),

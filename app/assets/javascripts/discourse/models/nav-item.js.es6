@@ -7,17 +7,18 @@ const NavItem = Discourse.Model.extend({
         name = this.get('name'),
         count = this.get('count') || 0;
 
-    if (name === 'latest' && !Discourse.Mobile.mobileView) {
+    if (name === 'latest' && !Discourse.Site.currentProp('mobileView')) {
       count = 0;
     }
 
     var extra = { count: count };
+    var titleKey = count === 0 ? '.title' : '.title_with_count';
 
     if (categoryName) {
       name = 'category';
       extra.categoryName = toTitleCase(categoryName);
     }
-    return I18n.t("filters." + name.replace("/", ".") + ".title", extra);
+    return I18n.t("filters." + name.replace("/", ".") + titleKey, extra);
   }.property('categoryName', 'name', 'count'),
 
   categoryName: function() {
@@ -28,7 +29,7 @@ const NavItem = Discourse.Model.extend({
   categorySlug: function() {
     var split = this.get('name').split('/');
     if (split[0] === 'category' && split[1]) {
-      var cat = Discourse.Site.current().categories.findProperty('nameLower', split[1].toLowerCase());
+      var cat = Discourse.Site.current().categories.findBy('nameLower', split[1].toLowerCase());
       return cat ? Discourse.Category.slugFor(cat) : null;
     }
     return null;
@@ -85,9 +86,9 @@ NavItem.reopenClass({
         testName = name.split("/")[0],
         anonymous = !Discourse.User.current();
 
-    if (anonymous && !Discourse.Site.currentProp('anonymous_top_menu_items').contains(testName)) return null;
+    if (anonymous && !Discourse.Site.currentProp('anonymous_top_menu_items').includes(testName)) return null;
     if (!Discourse.Category.list() && testName === "categories") return null;
-    if (!Discourse.Site.currentProp('top_menu_items').contains(testName)) return null;
+    if (!Discourse.Site.currentProp('top_menu_items').includes(testName)) return null;
 
     var args = { name: name, hasIcon: name === "unread" }, extra = null, self = this;
     if (opts.category) { args.category = opts.category; }
@@ -103,21 +104,17 @@ NavItem.reopenClass({
 
   buildList(category, args) {
     args = args || {};
-    if (category) { args.category = category }
 
-    var items = Discourse.SiteSettings.top_menu.split("|");
+    if (category) { args.category = category; }
 
-    if (args.filterMode && !_.some(items, function(i){
-      return i.indexOf(args.filterMode) !== -1;
-    })) {
+    let items = Discourse.SiteSettings.top_menu.split("|");
+
+    if (args.filterMode && !_.some(items, i => i.indexOf(args.filterMode) !== -1)) {
       items.push(args.filterMode);
     }
 
-    return items.map(function(i) {
-      return Discourse.NavItem.fromText(i, args);
-    }).filter(function(i) {
-      return i !== null && !(category && i.get("name").indexOf("categor") === 0);
-    });
+    return items.map(i => Discourse.NavItem.fromText(i, args))
+                .filter(i => i !== null && !(category && i.get("name").indexOf("categor") === 0));
   }
 
 });

@@ -83,19 +83,20 @@ a.loading-onebox {
 @mixin onebox-favicon($class, $image) {
   &.#{$class} .source {
     background: image-url("favicons/#{$image}.png") no-repeat;
+    background-size: 16px 16px;
     padding-left: 20px;
   }
 }
 
 aside.onebox {
-  @include post-aside;
+  border: 5px solid dark-light-diff($primary, $secondary, 90%, -85%);
 
   padding: 12px 25px 12px 12px;
   font-size: 1em;
 
   header {
     a[href] {
-      color: $primary;
+      color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
       text-decoration: none;
     }
   }
@@ -109,6 +110,7 @@ aside.onebox {
   @include onebox-favicon('githubissue', 'github');
   @include onebox-favicon('githubgist', 'github');
   @include onebox-favicon('amazon', 'amazon');
+  @include onebox-favicon('googledocs', 'google_branding/logo_drive_48px');
 
 
   .onebox-body {
@@ -116,7 +118,7 @@ aside.onebox {
 
     h3, h4 {
       font-size: 1.17em;
-      margin: 10px 0;
+      margin: 0 0 10px 0;
     }
 
     a[href] {
@@ -129,11 +131,56 @@ aside.onebox {
     }
 
     img {
-      max-height: 80%;
+      max-height: 170px;
       max-width: 20%;
       height: auto;
       float: left;
       margin-right: 10px;
+    }
+
+    .tweet-images {
+      display: block;
+      clear: both;
+
+      img.tweet-image {
+        margin-top: 1em;
+        max-width: 100%;
+        max-height: 100%;
+        float: none;
+      }
+    }
+  }
+}
+
+@mixin gdocs-logo($type) {
+  &.g-#{$type}-logo {
+    background: image-url("favicons/google_branding/logo_#{$type}_48px.png") no-repeat;
+  }
+}
+
+.googledocs-onebox-logo {
+  width: 60px;
+  height: 50px;
+  float: left;
+  @include gdocs-logo('docs');
+  @include gdocs-logo('forms');
+  @include gdocs-logo('sheets');
+  @include gdocs-logo('slides');
+  @include gdocs-logo('calendar');
+  @include gdocs-logo('drive');
+}
+
+// Google Calendar Placeholder
+.gdocs-onebox-splash {
+  background-color: blend-primary-secondary(30%);
+  color: $primary;
+  border: 1px inset $primary;
+  .gdocs-onebox-logo {
+    display: inline-block;
+    width: 128px;
+    height: 128px;
+    &.g-calendar-logo {
+      background: image-url("favicons/google_branding/logo_calendar_128px.png") no-repeat;
     }
   }
 }
@@ -248,13 +295,75 @@ aside.onebox.twitterstatus .onebox-body {
   .thumbnail {
     float: left;
   }
-  p {
+  p, .tweet {
     float: left;
+    display: inline-block;
     white-space: pre-wrap;
-    margin-top: 5px;
-    width: 100%;
+    padding-top: 3px;
+    width: 85%;
   }
   .date {
     clear: left;
+    padding-top: 5px;
+  }
+}
+
+// Onebox - Imgur - Album
+.onebox.imgur-album {
+  .outer-box {
+    position: absolute;
+    z-index: 935;
+    height: 30px;
+    overflow: hidden;
+    font-size: 12px;
+    color: #fff;
+    background-color: rgba(0, 0, 0, 0.6);
+    text-overflow: ellipsis;
+    max-width: 100%;
+
+    .inner-box {
+      padding-left: 10px;
+      padding-right: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-wrap: normal;
+      white-space: nowrap;
+
+      .album-title {
+        width: 100%;
+        font-size: 13px;
+        line-height: 30px;
+        color: #ccc;
+        text-decoration: none;
+      }
+    }
+  }
+}
+
+// resize stackexchange onebox image
+aside.onebox.stackexchange .onebox-body {
+  img {
+    max-height: 60%;
+    max-width: 10%;
+  }
+
+  .tags {
+    color: gray;
+  }
+}
+
+.onebox-metadata {
+  color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+}
+
+// mobile specific style
+.mobile-view article.onebox-body {
+  border-top: none;
+}
+
+.onebox.xkcd .onebox-body {
+  img {
+    max-width: 100% !important;
+    float: none !important;
   }
 }

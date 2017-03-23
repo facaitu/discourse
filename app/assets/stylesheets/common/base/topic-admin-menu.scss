@@ -4,26 +4,29 @@
   position: fixed;
   top: 120px;
   right: 10px;
-  z-index: 1000;
+  z-index: 999;
   outline: 0;
 }
 
-.topic-admin-menu {
+.popup-menu {
   background-color: $secondary;
   width: 205px;
   padding: 10px;
   border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
-  z-index: 1001;
+  z-index: 999;
 
   ul {
     list-style: none;
     margin: 10px 0 0 0;
   }
 
+  .btn {
+    text-align: left;
+  }
+
   button {
     width: 200px;
     margin-bottom: 5px;
-
     i {
       width: 14px;
     }
@@ -40,11 +43,6 @@
     display: block;
     .badge-wrapper {
       margin-right: 0;
-    }
-    .date-picker {
-      text-align: center;
-      width: 80px;
-      margin: 0;
     }
     .desc {
       display: inline-block;

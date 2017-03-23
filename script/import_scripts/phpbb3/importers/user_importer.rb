@@ -9,6 +9,10 @@ module ImportScripts::PhpBB3
       @settings = settings
     end
 
+    def map_users_to_import_ids(rows)
+      rows.map { |row| row[:user_id] }
+    end
+
     def map_user(row)
       is_active_user = row[:user_inactive_reason] != Constants::INACTIVE_REGISTER
 
@@ -38,14 +42,18 @@ module ImportScripts::PhpBB3
       }
     end
 
+    def map_anonymous_users_to_import_ids(rows)
+      rows.map { |row| row[:post_username] }
+    end
+
     def map_anonymous_user(row)
       username = row[:post_username]
 
       {
         id: username,
-        email: "anonymous_no_email_#{username}",
+        email: "anonymous_no_email_#{SecureRandom.hex}",
         username: username,
-        name: '',
+        name: @settings.username_as_name ? username : '',
         created_at: Time.zone.at(row[:first_post_time]),
         active: true,
         trust_level: TrustLevel[0],
@@ -64,7 +72,8 @@ module ImportScripts::PhpBB3
 
     def parse_birthdate(row)
       return nil if row[:user_birthday].blank?
-      Date.strptime(row[:user_birthday].delete(' '), '%d-%m-%Y') rescue nil
+      birthdate = Date.strptime(row[:user_birthday].delete(' '), '%d-%m-%Y') rescue nil
+      birthdate && birthdate.year > 0 ? birthdate : nil
     end
 
     # Suspends the user if it is currently banned.
@@ -82,10 +91,12 @@ module ImportScripts::PhpBB3
       end
 
       if disable_email
-        user.email_digests = false
-        user.email_private_messages = false
-        user.email_direct = false
-        user.email_always = false
+        user_option = user.user_option
+        user_option.email_digests = false
+        user_option.email_private_messages = false
+        user_option.email_direct = false
+        user_option.email_always = false
+        user_option.save!
       end
 
       if user.save

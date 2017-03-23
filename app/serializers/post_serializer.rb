@@ -34,10 +34,14 @@ class PostSerializer < BasicPostSerializer
              :category_id,
              :display_username,
              :primary_group_name,
+             :primary_group_flair_url,
+             :primary_group_flair_bg_color,
+             :primary_group_flair_color,
              :version,
              :can_edit,
              :can_delete,
              :can_recover,
+             :can_wiki,
              :link_counts,
              :read,
              :user_title,
@@ -62,7 +66,9 @@ class PostSerializer < BasicPostSerializer
              :user_custom_fields,
              :static_doc,
              :via_email,
-             :action_code
+             :is_auto_generated,
+             :action_code,
+             :action_code_who
 
   def initialize(object, opts)
     super(object, opts)
@@ -74,7 +80,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def topic_slug
-    object.try(:topic).try(:slug)
+    object.topic && object.topic.slug
   end
 
   def include_topic_title?
@@ -129,6 +135,10 @@ class PostSerializer < BasicPostSerializer
     scope.can_recover_post?(object)
   end
 
+  def can_wiki
+    scope.can_wiki?(object)
+  end
+
   def display_username
     object.user.try(:name)
   end
@@ -141,6 +151,18 @@ class PostSerializer < BasicPostSerializer
     else
       object.user.primary_group.name if object.user.primary_group
     end
+  end
+
+  def primary_group_flair_url
+    object.user.try(:primary_group).try(:flair_url)
+  end
+
+  def primary_group_flair_bg_color
+    object.user.try(:primary_group).try(:flair_bg_color)
+  end
+
+  def primary_group_flair_color
+    object.user.try(:primary_group).try(:flair_color)
   end
 
   def link_counts
@@ -177,8 +199,7 @@ class PostSerializer < BasicPostSerializer
   def reply_to_user
     {
       username: object.reply_to_user.username,
-      avatar_template: object.reply_to_user.avatar_template,
-      uploaded_avatar_id: object.reply_to_user.uploaded_avatar_id
+      avatar_template: object.reply_to_user.avatar_template
     }
   end
 
@@ -306,12 +327,28 @@ class PostSerializer < BasicPostSerializer
     object.via_email?
   end
 
+  def is_auto_generated
+    object.incoming_email.try(:is_auto_generated)
+  end
+
+  def include_is_auto_generated?
+    object.via_email? && is_auto_generated
+  end
+
   def version
     scope.is_staff? ? object.version : object.public_version
   end
 
   def include_action_code?
     object.action_code.present?
+  end
+
+  def action_code_who
+    post_custom_fields["action_code_who"]
+  end
+
+  def include_action_code_who?
+    include_action_code? && action_code_who.present?
   end
 
   private

@@ -1,4 +1,5 @@
-import DiscourseURL from 'discourse/lib/url';
+import StaticPage from 'discourse/models/static-page';
+import { default as DiscourseURL, jumpToElement } from 'discourse/lib/url';
 
 const configs = {
   "faq": "faq_url",
@@ -6,7 +7,7 @@ const configs = {
   "privacy": "privacy_policy_url"
 };
 
-export default (page) => {
+export default function(page) {
   return Discourse.Route.extend({
     renderTemplate() {
       this.render("static");
@@ -22,12 +23,11 @@ export default (page) => {
 
     activate() {
       this._super();
-      // Scroll to an element if exists
-      DiscourseURL.scrollToId(document.location.hash);
+      jumpToElement(document.location.hash.substr(1));
     },
 
     model() {
-      return Discourse.StaticPage.find(page);
+      return StaticPage.find(page);
     },
 
     setupController(controller, model) {

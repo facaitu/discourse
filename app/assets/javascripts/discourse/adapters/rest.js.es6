@@ -1,13 +1,13 @@
-import StaleResult from 'discourse/lib/stale-result';
-const ADMIN_MODELS = ['plugin', 'site-customization', 'embeddable-host'];
+import { ajax } from 'discourse/lib/ajax';
+import { hashString } from 'discourse/lib/hash';
+
+const ADMIN_MODELS = ['plugin', 'site-customization', 'embeddable-host', 'web-hook', 'web-hook-event'];
 
 export function Result(payload, responseJson) {
   this.payload = payload;
   this.responseJson = responseJson;
   this.target = null;
 }
-
-const ajax = Discourse.ajax;
 
 // We use this to make sure 404s are caught
 function rethrow(error) {
@@ -19,14 +19,21 @@ function rethrow(error) {
 
 export default Ember.Object.extend({
 
+
+  storageKey(type, findArgs, options) {
+    if (options && options.cacheKey) {
+      return options.cacheKey;
+    }
+    const hashedArgs = Math.abs(hashString(JSON.stringify(findArgs)));
+    return `${type}_${hashedArgs}`;
+  },
+
   basePath(store, type) {
     if (ADMIN_MODELS.indexOf(type.replace('_', '-')) !== -1) { return "/admin/"; }
     return "/";
   },
 
-  pathFor(store, type, findArgs) {
-    let path = this.basePath(store, type, findArgs) + Ember.String.underscore(store.pluralize(type));
-
+  appendQueryParams(path, findArgs) {
     if (findArgs) {
       if (typeof findArgs === "object") {
         const queryString = Object.keys(findArgs)
@@ -34,19 +41,23 @@ export default Ember.Object.extend({
                                   .map(k => k + "=" + encodeURIComponent(findArgs[k]));
 
         if (queryString.length) {
-          path += "?" + queryString.join('&');
+          return path + "?" + queryString.join('&');
         }
       } else {
         // It's serializable as a string if not an object
-        path += "/" + findArgs;
+        return path + "/" + findArgs;
       }
     }
-
     return path;
   },
 
-  findAll(store, type) {
-    return ajax(this.pathFor(store, type)).catch(rethrow);
+  pathFor(store, type, findArgs) {
+    let path = this.basePath(store, type, findArgs) + Ember.String.underscore(store.pluralize(type));
+    return this.appendQueryParams(path, findArgs);
+  },
+
+  findAll(store, type, findArgs) {
+    return ajax(this.pathFor(store, type, findArgs)).catch(rethrow);
   },
 
 
@@ -54,8 +65,15 @@ export default Ember.Object.extend({
     return ajax(this.pathFor(store, type, findArgs)).catch(rethrow);
   },
 
-  findStale() {
-    return new StaleResult();
+  findStale(store, type, findArgs, options) {
+    if (this.cached) {
+      return this.cached[this.storageKey(type, findArgs, options)];
+    }
+  },
+
+  cacheFind(store, type, findArgs, opts, hydrated) {
+    this.cached = this.cached || {};
+    this.cached[this.storageKey(type,findArgs,opts)] = hydrated;
   },
 
   update(store, type, id, attrs) {

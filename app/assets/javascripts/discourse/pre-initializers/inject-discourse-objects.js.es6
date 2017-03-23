@@ -5,7 +5,8 @@ import Store from 'discourse/models/store';
 import DiscourseURL from 'discourse/lib/url';
 import DiscourseLocation from 'discourse/lib/discourse-location';
 import SearchService from 'discourse/services/search';
-import TopicTrackingState from 'discourse/models/topic-tracking-state';
+import { startTracking, default as TopicTrackingState } from 'discourse/models/topic-tracking-state';
+import ScreenTrack from 'discourse/lib/screen-track';
 
 function inject() {
   const app = arguments[0],
@@ -16,7 +17,7 @@ function inject() {
 }
 
 function injectAll(app, name) {
-  inject(app, name, 'controller', 'component', 'route', 'view', 'model', 'adapter');
+  inject(app, name, 'controller', 'component', 'route', 'model', 'adapter');
 }
 
 export default {
@@ -31,32 +32,46 @@ export default {
     app.register('store:main', Store);
     inject(app, 'store', 'route', 'controller');
 
-    app.register('message-bus:main', window.MessageBus, { instantiate: false });
+    const messageBus = window.MessageBus;
+    app.register('message-bus:main', messageBus, { instantiate: false });
     injectAll(app, 'messageBus');
 
-    app.register('topic-tracking-state:main', TopicTrackingState.current(), { instantiate: false });
+    const currentUser = Discourse.User.current();
+    app.register('current-user:main', currentUser, { instantiate: false });
+
+    const topicTrackingState = TopicTrackingState.create({ messageBus, currentUser });
+    app.register('topic-tracking-state:main', topicTrackingState, { instantiate: false });
     injectAll(app, 'topicTrackingState');
 
     const site = Discourse.Site.current();
     app.register('site:main', site, { instantiate: false });
     injectAll(app, 'site');
 
-    app.register('site-settings:main', Discourse.SiteSettings, { instantiate: false });
+    const siteSettings = Discourse.SiteSettings;
+    app.register('site-settings:main', siteSettings, { instantiate: false });
     injectAll(app, 'siteSettings');
 
     app.register('search-service:main', SearchService);
     injectAll(app, 'searchService');
 
-    app.register('session:main', Session.current(), { instantiate: false });
+    const session = Session.current();
+    app.register('session:main', session, { instantiate: false });
     injectAll(app, 'session');
 
-    app.register('current-user:main', Discourse.User.current(), { instantiate: false });
-    inject(app, 'currentUser', 'component', 'route', 'controller');
+    const screenTrack = new ScreenTrack(topicTrackingState, siteSettings, session, currentUser);
+    app.register('screen-track:main', screenTrack, { instantiate: false });
+    inject(app, 'screenTrack', 'component', 'route');
+
+    if (currentUser) {
+      inject(app, 'currentUser', 'component', 'route', 'controller');
+    }
 
     app.register('location:discourse-location', DiscourseLocation);
 
     const keyValueStore = new KeyValueStore("discourse_");
     app.register('key-value-store:main', keyValueStore, { instantiate: false });
     injectAll(app, 'keyValueStore');
+
+    startTracking(topicTrackingState);
   }
 };

@@ -54,6 +54,7 @@ class ImportScripts::Lithium < ImportScripts::Base
   def execute
 
     SiteSetting.allow_html_tables = true
+    @max_start_id = Post.maximum(:id)
 
     import_categories
     import_users
@@ -100,6 +101,8 @@ class ImportScripts::Lithium < ImportScripts::Base
       SQL
 
       break if users.size < 1
+
+      next if all_records_exist? :users, users.map {|u| u["id"].to_i}
 
       create_users(users, total: user_count, offset: offset) do |user|
 
@@ -274,8 +277,9 @@ class ImportScripts::Lithium < ImportScripts::Base
           OFFSET #{offset}
       SQL
 
-
       break if topics.size < 1
+
+      next if all_records_exist? :posts, topics.map {|topic| "#{topic["node_id"]} #{topic["id"]}"}
 
       create_posts(topics, total: topic_count, offset: offset) do |topic|
 
@@ -304,10 +308,11 @@ class ImportScripts::Lithium < ImportScripts::Base
   end
 
   def import_posts
-    puts "", "importing posts..."
 
     post_count = mysql_query("SELECT COUNT(*) count FROM message2
                               WHERE id <> root_id").first["count"]
+
+    puts "", "importing posts... (#{post_count})"
 
     batches(BATCH_SIZE) do |offset|
       posts = mysql_query <<-SQL
@@ -321,6 +326,8 @@ class ImportScripts::Lithium < ImportScripts::Base
       SQL
 
       break if posts.size < 1
+
+      next if all_records_exist? :posts, posts.map {|post| "#{post["node_id"]} #{post["root_id"]} #{post["id"]}"}
 
       create_posts(posts, total: post_count, offset: offset) do |post|
         raw = post["raw"]
@@ -593,6 +600,8 @@ class ImportScripts::Lithium < ImportScripts::Base
 
       break if topics.size < 1
 
+      next if all_records_exist? :posts, topics.map {|topic| "pm_#{topic["note_id"]}"}
+
       create_posts(topics, total: topic_count, offset: offset) do |topic|
 
         user_id = user_id_from_imported_user_id(topic["sender_user_id"]) || Discourse::SYSTEM_USER_ID
@@ -621,7 +630,6 @@ class ImportScripts::Lithium < ImportScripts::Base
           created_at: unix_time(topic["sent_time"]),
           import_mode: true
         }
-
 
         unless topic_id
           msg[:title] = @htmlentities.decode(topic["subject"]).strip[0...255]
@@ -732,15 +740,26 @@ SQL
   def post_process_posts
     puts "", "Postprocessing posts..."
 
+
     current = 0
     max = Post.count
 
-    Post.all.find_each do |post|
+    mysql_query("create index idxUniqueId on message2(unique_id)") rescue nil
+
+    Post.where('id > ?', @max_start_id).find_each do |post|
       begin
-        new_raw = postprocess_post_raw(post.raw, post.user_id)
+        id = post.custom_fields["import_unique_id"]
+        next unless id
+        raw = mysql_query("select body from message2 where unique_id = '#{id}'").first['body']
+        unless raw
+          puts "Missing raw for post: #{post.id}"
+          next
+        end
+        new_raw = postprocess_post_raw(raw, post.user_id)
         post.raw = new_raw
         post.save
       rescue PrettyText::JavaScriptError
+        puts "GOT A JS error on post: #{post.id}"
         nil
       ensure
         print_status(current += 1, max)
@@ -818,7 +837,7 @@ SQL
   end
 
   def mysql_query(sql)
-    @client.query(sql, cache_rows: false)
+    @client.query(sql, cache_rows: true)
   end
 
 end

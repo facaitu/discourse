@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe PostTiming do
 
@@ -81,8 +81,7 @@ describe PostTiming do
     # integration test
 
     it 'processes timings correctly' do
-
-      ActiveRecord::Base.observers.enable :all
+      PostActionNotifier.enable
 
       post = Fabricate(:post)
       user2 = Fabricate(:coding_horror, created_at: 1.day.ago)

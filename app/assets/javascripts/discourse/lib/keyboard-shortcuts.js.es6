@@ -1,62 +1,59 @@
 import DiscourseURL from 'discourse/lib/url';
+import Composer from 'discourse/models/composer';
+import { scrollTopFor } from 'discourse/lib/offset-calculator';
 
-const PATH_BINDINGS = {
-      'g h': '/',
-      'g l': '/latest',
-      'g n': '/new',
-      'g u': '/unread',
-      'g c': '/categories',
-      'g t': '/top',
-      'g b': '/bookmarks',
-      'g p': '/my/activity',
-      'g m': '/my/messages'
-    },
-
-    SELECTED_POST_BINDINGS = {
-      'd': 'deletePost',
-      'e': 'editPost',
-      'l': 'toggleLike',
-      'r': 'replyToPost',
-      '!': 'showFlags',
-      't': 'replyAsNewTopic'
-    },
-
-    CLICK_BINDINGS = {
-      'm m': 'div.notification-options li[data-id="0"] a',                      // mark topic as muted
-      'm r': 'div.notification-options li[data-id="1"] a',                      // mark topic as regular
-      'm t': 'div.notification-options li[data-id="2"] a',                      // mark topic as tracking
-      'm w': 'div.notification-options li[data-id="3"] a',                      // mark topic as watching
-      'x r': '#dismiss-new,#dismiss-new-top,#dismiss-posts,#dismiss-posts-top', // dismiss new/posts
-      'x t': '#dismiss-topics,#dismiss-topics-top',                             // dismiss topics
-      '.': '.alert.alert-info.clickable',                                       // show incoming/updated topics
-      'o,enter': '.topic-list tr.selected a.title',                             // open selected topic
-      'shift+s': '#topic-footer-buttons button.share',                          // share topic
-      's': '.topic-post.selected a.post-date'                                   // share post
-    },
-
-    FUNCTION_BINDINGS = {
-      'c': 'createTopic',                                                       // create new topic
-      'home': 'goToFirstPost',
-      '#': 'toggleProgress',
-      'end': 'goToLastPost',
-      'shift+j': 'nextSection',
-      'j': 'selectDown',
-      'shift+k': 'prevSection',
-      'shift+p': 'pinUnpinTopic',
-      'k': 'selectUp',
-      'u': 'goBack',
-      '/': 'showSearch',
-      '=': 'toggleHamburgerMenu',
-      'p': 'showCurrentUser',                                                   // open current user menu
-      'ctrl+f': 'showBuiltinSearch',
-      'command+f': 'showBuiltinSearch',
-      '?': 'showHelpModal',                                                     // open keyboard shortcut help
-      'q': 'quoteReply',
-      'b': 'toggleBookmark',
-      'f': 'toggleBookmarkTopic',
-      'shift+r': 'replyToTopic',
-      'shift+z shift+z': 'logout'
-    };
+const bindings = {
+  '!':               {postAction: 'showFlags'},
+  '#':               {handler: 'goToPost', anonymous: true},
+  '/':               {handler: 'toggleSearch', anonymous: true},
+  '=':               {handler: 'toggleHamburgerMenu', anonymous: true},
+  '?':               {handler: 'showHelpModal', anonymous: true},
+  '.':               {click: '.alert.alert-info.clickable', anonymous: true}, // show incoming/updated topics
+  'b':               {handler: 'toggleBookmark'},
+  'c':               {handler: 'createTopic'},
+  'ctrl+f':          {handler: 'showPageSearch', anonymous: true},
+  'command+f':       {handler: 'showPageSearch', anonymous: true},
+  'ctrl+p':          {handler: 'printTopic', anonymous: true},
+  'command+p':       {handler: 'printTopic', anonymous: true},
+  'd':               {postAction: 'deletePost'},
+  'e':               {postAction: 'editPost'},
+  'end':             {handler: 'goToLastPost', anonymous: true},
+  'command+down':    {handler: 'goToLastPost', anonymous: true},
+  'f':               {handler: 'toggleBookmarkTopic'},
+  'g h':             {path: '/', anonymous: true},
+  'g l':             {path: '/latest', anonymous: true},
+  'g n':             {path: '/new'},
+  'g u':             {path: '/unread'},
+  'g c':             {path: '/categories', anonymous: true},
+  'g t':             {path: '/top', anonymous: true},
+  'g b':             {path: '/bookmarks'},
+  'g p':             {path: '/my/activity'},
+  'g m':             {path: '/my/messages'},
+  'home':            {handler: 'goToFirstPost', anonymous: true},
+  'command+up':      {handler: 'goToFirstPost', anonymous: true},
+  'j':               {handler: 'selectDown', anonymous: true},
+  'k':               {handler: 'selectUp', anonymous: true},
+  'l':               {click: '.topic-post.selected button.toggle-like'},
+  'm m':             {handler: 'setTrackingToMuted'}, // mark topic as muted
+  'm r':             {handler: 'setTrackingToRegular'}, // mark topic as regular
+  'm t':             {handler: 'setTrackingToTracking'}, // mark topic as tracking
+  'm w':             {handler: 'setTrackingToWatching'}, // mark topic as watching
+  'o,enter':         {click: '.topic-list tr.selected a.title', anonymous: true}, // open selected topic
+  'p':               {handler: 'showCurrentUser'},
+  'q':               {handler: 'quoteReply'},
+  'r':               {postAction: 'replyToPost'},
+  's':               {click: '.topic-post.selected a.post-date', anonymous: true}, // share post
+  'shift+j':         {handler: 'nextSection', anonymous: true},
+  'shift+k':         {handler: 'prevSection', anonymous: true},
+  'shift+p':         {handler: 'pinUnpinTopic'},
+  'shift+r':         {handler: 'replyToTopic'},
+  'shift+s':         {click: '#topic-footer-buttons button.share', anonymous: true}, // share topic
+  'shift+z shift+z': {handler: 'logout'},
+  't':               {postAction: 'replyAsNewTopic'},
+  'u':               {handler: 'goBack', anonymous: true},
+  'x r':             {click: '#dismiss-new,#dismiss-new-top,#dismiss-posts,#dismiss-posts-top'}, // dismiss new/posts
+  'x t':             {click: '#dismiss-topics,#dismiss-topics-top'} // dismiss topics
+};
 
 
 export default {
@@ -65,14 +62,24 @@ export default {
     this.container = container;
     this._stopCallback();
 
-
     this.searchService = this.container.lookup('search-service:main');
     this.appEvents = this.container.lookup('app-events:main');
+    this.currentUser = this.container.lookup('current-user:main');
 
-    _.each(PATH_BINDINGS, this._bindToPath, this);
-    _.each(CLICK_BINDINGS, this._bindToClick, this);
-    _.each(SELECTED_POST_BINDINGS, this._bindToSelectedPost, this);
-    _.each(FUNCTION_BINDINGS, this._bindToFunction, this);
+    Object.keys(bindings).forEach(key => {
+      const binding = bindings[key];
+      if (!binding.anonymous && !this.currentUser) { return; }
+
+      if (binding.path) {
+        this._bindToPath(binding.path, key);
+      } else if (binding.handler) {
+        this._bindToFunction(binding.handler, key);
+      } else if (binding.postAction) {
+        this._bindToSelectedPost(binding.postAction, key);
+      } else if (binding.click) {
+        this._bindToClick(binding.click, key);
+      }
+    });
   },
 
   toggleBookmark() {
@@ -95,10 +102,10 @@ export default {
   },
 
   quoteReply() {
-    $('.topic-post.selected button.create').click();
+    this.sendToSelectedPost("replyToPost");
     // lazy but should work for now
     setTimeout(function() {
-      $('#wmd-quote-post').click();
+      $('.d-editor .quote').click();
     }, 500);
   },
 
@@ -112,12 +119,12 @@ export default {
 
   _jumpTo(direction) {
     if ($('.container.posts').length) {
-      this.container.lookup('controller:topic-progress').send(direction);
+      this.container.lookup('controller:topic').send(direction);
     }
   },
 
   replyToTopic() {
-    this.container.lookup('controller:topic').send('replyToPost');
+    this._replyToPost();
   },
 
   selectDown() {
@@ -140,62 +147,73 @@ export default {
     this._changeSection(-1);
   },
 
-  showBuiltinSearch() {
-    this.searchService.set('searchContextEnabled', false);
+  showPageSearch(event) {
+    Ember.run(() => {
+      this.appEvents.trigger('header:keyboard-trigger', {type: 'page-search', event});
+    });
+  },
 
-    const currentPath = this.container.lookup('controller:application').get('currentPath'),
-          blacklist = [ /^discovery\.categories/ ],
-          whitelist = [ /^topic\./ ],
-          check = function(regex) { return !!currentPath.match(regex); };
-    let showSearch = whitelist.any(check) && !blacklist.any(check);
-
-    // If we're viewing a topic, only intercept search if there are cloaked posts
-    if (showSearch && currentPath.match(/^topic\./)) {
-      showSearch = $('.cooked').length < this.container.lookup('controller:topic').get('model.postStream.stream.length');
-    }
-
-    if (showSearch) {
-      this.searchService.set('searchContextEnabled', true);
-      this.showSearch();
-      return false;
-    }
-
-    return true;
+  printTopic(event) {
+    Ember.run(() => {
+      if ($('.container.posts').length) {
+        event.preventDefault(); // We need to stop printing the current page in Firefox
+        this.container.lookup('controller:topic').print();
+      }
+    });
   },
 
   createTopic() {
-    this.container.lookup('controller:composer').open({action: Discourse.Composer.CREATE_TOPIC, draftKey: Discourse.Composer.CREATE_TOPIC});
+    this.container.lookup('controller:composer').open({action: Composer.CREATE_TOPIC, draftKey: Composer.CREATE_TOPIC});
   },
 
   pinUnpinTopic() {
     this.container.lookup('controller:topic').togglePinnedState();
   },
 
-  toggleProgress() {
-    this.container.lookup('controller:topic-progress').send('toggleExpansion', {highlight: true});
+  goToPost() {
+    this.appEvents.trigger('topic:keyboard-trigger', { type: 'jump' });
   },
 
-  showSearch() {
-    this.container.lookup('controller:header').send('toggleMenuPanel', 'searchVisible');
+  toggleSearch(event) {
+    this.appEvents.trigger('header:keyboard-trigger', {type: 'search', event});
   },
 
-  toggleHamburgerMenu() {
-    this.container.lookup('controller:header').send('toggleMenuPanel', 'hamburgerVisible');
+  toggleHamburgerMenu(event) {
+    this.appEvents.trigger('header:keyboard-trigger', {type: 'hamburger', event});
   },
 
-  showCurrentUser() {
-    this.container.lookup('controller:header').send('toggleMenuPanel', 'userMenuVisible');
+  showCurrentUser(event) {
+    this.appEvents.trigger('header:keyboard-trigger', {type: 'user', event});
   },
 
   showHelpModal() {
     this.container.lookup('controller:application').send('showKeyboardShortcutsHelp');
   },
 
+  setTrackingToMuted(event) {
+    this.appEvents.trigger('topic-notifications-button:keyboard-trigger', {type: 'notification', id: 0, event});
+  },
+
+  setTrackingToRegular(event) {
+    this.appEvents.trigger('topic-notifications-button:keyboard-trigger', {type: 'notification', id: 1, event});
+  },
+
+  setTrackingToTracking(event) {
+    this.appEvents.trigger('topic-notifications-button:keyboard-trigger', {type: 'notification', id: 2, event});
+  },
+
+  setTrackingToWatching(event) {
+    this.appEvents.trigger('topic-notifications-button:keyboard-trigger', {type: 'notification', id: 3, event});
+  },
+
   sendToTopicListItemView(action) {
     const elem = $('tr.selected.topic-list-item.ember-view')[0];
     if (elem) {
-      const view = Ember.View.views[elem.id];
-      view.send(action);
+      const registry = this.container.lookup('-view-registry:main');
+      if (registry) {
+        const view = registry[elem.id];
+        view.send(action);
+      }
     }
   },
 
@@ -214,26 +232,30 @@ export default {
     // TODO: We should keep track of the post without a CSS class
     const selectedPostId = parseInt($('.topic-post.selected article.boxed').data('post-id'), 10);
     if (selectedPostId) {
-      const topicController = container.lookup('controller:topic'),
-          post = topicController.get('model.postStream.posts').findBy('id', selectedPostId);
+      const topicController = container.lookup('controller:topic');
+      const post = topicController.get('model.postStream.posts').findBy('id', selectedPostId);
       if (post) {
-        topicController.send(action, post);
+        // TODO: Use ember closure actions
+        let actionMethod = topicController._actions[action];
+        if (!actionMethod) {
+          const topicRoute = container.lookup('route:topic');
+          actionMethod = topicRoute._actions[action];
+        }
+
+        const result = actionMethod.call(topicController, post);
+        if (result && result.then) {
+          this.appEvents.trigger('post-stream:refresh', { id: selectedPostId });
+        }
       }
     }
   },
 
   _bindToSelectedPost(action, binding) {
-    const self = this;
-
-    this.keyTrapper.bind(binding, function() {
-      self.sendToSelectedPost(action);
-    });
+    this.keyTrapper.bind(binding, () => this.sendToSelectedPost(action));
   },
 
-  _bindToPath(path, binding) {
-    this.keyTrapper.bind(binding, function() {
-      DiscourseURL.routeTo(path);
-    });
+  _bindToPath(path, key) {
+    this.keyTrapper.bind(key, () => DiscourseURL.routeTo(path));
   },
 
   _bindToClick(selector, binding) {
@@ -269,7 +291,9 @@ export default {
       return;
     }
 
-    const $selected = $articles.filter('.selected');
+    const $selected = ($articles.filter('.selected').length !== 0)
+      ? $articles.filter('.selected')
+      : $articles.filter('[data-islastviewedtopic=true]');
     let index = $articles.index($selected);
 
     if ($selected.length !== 0) { //boundries check
@@ -285,7 +309,7 @@ export default {
       index = 0;
       $articles.each(function() {
         const top = $(this).position().top;
-        if (top > scrollTop) {
+        if (top >= scrollTop) {
           return false;
         }
         index += 1;
@@ -305,36 +329,36 @@ export default {
       $articles.removeClass('selected');
       $article.addClass('selected');
 
-      if ($article.is('.topic-list-item')) {
-        this.sendToTopicListItemView('select');
-      }
-
       if ($article.is('.topic-post')) {
-        let tabLoc = $article.find('a.tabLoc');
-        if (tabLoc.length === 0) {
-          tabLoc = $('<a href class="tabLoc"></a>');
-          $article.prepend(tabLoc);
-        }
-        tabLoc.focus();
-      }
+        $('a.tabLoc', $article).focus();
+        this._scrollToPost($article);
 
-      this._scrollList($article, direction);
+      } else {
+        this._scrollList($article, direction);
+      }
     }
+  },
+
+  _scrollToPost($article) {
+    const pos = $article.offset();
+    $(window).scrollTop(Math.ceil(pos.top - scrollTopFor(pos.top)));
   },
 
   _scrollList($article) {
     // Try to keep the article on screen
     const pos = $article.offset();
     const height = $article.height();
+    const headerHeight = $('header.d-header').height();
     const scrollTop = $(window).scrollTop();
     const windowHeight = $(window).height();
 
     // skip if completely on screen
-    if (pos.top > scrollTop && (pos.top + height) < (scrollTop + windowHeight)) {
+    if ((pos.top - headerHeight) > scrollTop && (pos.top + height) < (scrollTop + windowHeight)) {
       return;
     }
 
     let scrollPos = (pos.top + (height/2)) - (windowHeight * 0.5);
+    if (height > (windowHeight - headerHeight)) { scrollPos = (pos.top - headerHeight); }
     if (scrollPos < 0) { scrollPos = 0; }
 
     if (this._scrollAnimation) {
@@ -357,8 +381,8 @@ export default {
   },
 
   _changeSection(direction) {
-    const $sections = $('#navigation-bar li'),
-        active = $('#navigation-bar li.active'),
+    const $sections = $('.nav.nav-pills li'),
+        active = $('.nav.nav-pills li.active'),
         index = $sections.index(active) + direction;
 
     if (index >= 0 && index < $sections.length) {
@@ -367,14 +391,17 @@ export default {
   },
 
   _stopCallback() {
-    const oldStopCallback = this.keyTrapper.stopCallback;
+    const oldStopCallback = this.keyTrapper.prototype.stopCallback;
 
-    this.keyTrapper.stopCallback = function(e, element, combo) {
+    this.keyTrapper.prototype.stopCallback = function(e, element, combo, sequence) {
       if ((combo === 'ctrl+f' || combo === 'command+f') && element.id === 'search-term') {
         return false;
       }
-
-      return oldStopCallback(e, element, combo);
+      return oldStopCallback.call(this, e, element, combo, sequence);
     };
+  },
+
+  _replyToPost() {
+    this.container.lookup('controller:topic').send('replyToPost');
   }
 };

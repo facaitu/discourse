@@ -1,24 +1,41 @@
-import { translateResults } from "discourse/lib/search";
+import { ajax } from 'discourse/lib/ajax';
+import { translateResults, getSearchKey, isValidSearchTerm } from "discourse/lib/search";
+import Composer from 'discourse/models/composer';
+import PreloadStore from 'preload-store';
+import { getTransient, setTransient } from 'discourse/lib/page-tracker';
+import { getOwner } from 'discourse-common/lib/get-owner';
 
 export default Discourse.Route.extend({
-  queryParams: { q: {}, "context-id": {}, context: {} },
+  queryParams: { q: {}, expanded: false, context_id: {}, context: {}, skip_context: {} },
 
   model(params) {
+    const cached = getTransient('lastSearch');
+    var args = { q: params.q };
+    if (params.context_id && !args.skip_context) {
+      args.search_context = {
+        type: params.context,
+        id: params.context_id
+      };
+    }
+
+    const searchKey = getSearchKey(args);
+
+    if (cached && cached.data.searchKey === searchKey) {
+      // extend expiry
+      setTransient('lastSearch', { searchKey, model: cached.data.model }, 5);
+      return cached.data.model;
+    }
+
     return PreloadStore.getAndRemove("search", function() {
-      if (params.q && params.q.length > 2) {
-        var args = { q: params.q };
-        if (params.context_id && !args.skip_context) {
-          args.search_context = {
-            type: params.context,
-            id: params.context_id
-          }
-        }
-        return Discourse.ajax("/search", { data: args });
+      if (isValidSearchTerm(params.q)) {
+        return ajax("/search", { data: args });
       } else {
         return null;
       }
     }).then(results => {
-      return (results && translateResults(results)) || {};
+      const model = (results && translateResults(results)) || {};
+      setTransient('lastSearch', { searchKey, model }, 5);
+      return model;
     });
   },
 
@@ -26,6 +43,17 @@ export default Discourse.Route.extend({
     didTransition() {
       this.controllerFor("full-page-search")._showFooter();
       return true;
+    },
+
+    createTopic(searchTerm) {
+      let category;
+      if (searchTerm.indexOf("category:")) {
+        const match =  searchTerm.match(/category:(\S*)/);
+        if (match && match[1]) {
+          category = match[1];
+        }
+      }
+      getOwner(this).lookup('controller:composer').open({action: Composer.CREATE_TOPIC, draftKey: Composer.CREATE_TOPIC, topicCategory: category});
     }
   }
 

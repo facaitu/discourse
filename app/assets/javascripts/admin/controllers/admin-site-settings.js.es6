@@ -1,11 +1,12 @@
 import debounce from 'discourse/lib/debounce';
 
-export default Ember.ArrayController.extend({
+export default Ember.Controller.extend({
+  queryParams: ["filter"],
   filter: null,
   onlyOverridden: false,
   filtered: Ember.computed.notEmpty('filter'),
 
-  filterContentNow: function(category) {
+  filterContentNow(category) {
     // If we have no content, don't bother filtering anything
     if (!!Ember.isEmpty(this.get('allSiteSettings'))) return;
 
@@ -20,12 +21,13 @@ export default Ember.ArrayController.extend({
       return;
     }
 
-    const self = this,
-          matchesGroupedByCategory = [{nameKey: 'all_results', name: I18n.t('admin.site_settings.categories.all_results'), siteSettings: []}];
+    const all = {nameKey: 'all_results', name: I18n.t('admin.site_settings.categories.all_results'), siteSettings: []};
+    const matchesGroupedByCategory = [all];
 
-    this.get('allSiteSettings').forEach(function(settingsCategory) {
-      const matches = settingsCategory.siteSettings.filter(function(item) {
-        if (self.get('onlyOverridden') && !item.get('overridden')) return false;
+    const matches = [];
+    this.get('allSiteSettings').forEach(settingsCategory => {
+      const siteSettings = settingsCategory.siteSettings.filter(item => {
+        if (this.get('onlyOverridden') && !item.get('overridden')) return false;
         if (filter) {
           if (item.get('setting').toLowerCase().indexOf(filter) > -1) return true;
           if (item.get('setting').toLowerCase().replace(/_/g, ' ').indexOf(filter) > -1) return true;
@@ -36,15 +38,19 @@ export default Ember.ArrayController.extend({
           return true;
         }
       });
-      if (matches.length > 0) {
-        matchesGroupedByCategory[0].siteSettings.pushObjects(matches);
+      if (siteSettings.length > 0) {
+        matches.pushObjects(siteSettings);
         matchesGroupedByCategory.pushObject({
           nameKey: settingsCategory.nameKey,
           name: I18n.t('admin.site_settings.categories.' + settingsCategory.nameKey),
-          siteSettings: matches
+          siteSettings,
+          count: siteSettings.length
         });
       }
     });
+
+    all.siteSettings.pushObjects(matches.slice(0, 30));
+    all.count = matches.length;
 
     this.set('model', matchesGroupedByCategory);
     this.transitionToRoute("adminSiteSettingsCategory", category || "all_results");
@@ -60,10 +66,7 @@ export default Ember.ArrayController.extend({
 
   actions: {
     clearFilter() {
-      this.setProperties({
-        filter: '',
-        onlyOverridden: false
-      });
+      this.setProperties({ filter: '', onlyOverridden: false });
     },
 
     toggleMenu() {

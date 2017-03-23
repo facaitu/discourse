@@ -18,8 +18,11 @@ class Auth::GoogleOAuth2Authenticator < Auth::Authenticator
     user_info = GoogleUserInfo.find_by(google_user_id: google_hash[:google_user_id])
     result.user = user_info.try(:user)
 
-    if !result.user && !result.email.blank? && result.user = User.find_by_email(result.email)
-      GoogleUserInfo.create({user_id: result.user.id}.merge(google_hash))
+    if !result.user && !result.email.blank? && result.email_valid
+      result.user = User.find_by_email(result.email)
+      if result.user
+        GoogleUserInfo.create({user_id: result.user.id}.merge(google_hash))
+      end
     end
 
     result
@@ -31,12 +34,15 @@ class Auth::GoogleOAuth2Authenticator < Auth::Authenticator
   end
 
   def register_middleware(omniauth)
+    # jwt encoding is causing auth to fail in quite a few conditions
+    # skipping
     omniauth.provider :google_oauth2,
            :setup => lambda { |env|
               strategy = env["omniauth.strategy"]
               strategy.options[:client_id] = SiteSetting.google_oauth2_client_id
               strategy.options[:client_secret] = SiteSetting.google_oauth2_client_secret
-           }
+           },
+           skip_jwt: true
   end
 
   protected
@@ -48,7 +54,7 @@ class Auth::GoogleOAuth2Authenticator < Auth::Authenticator
 
     h[:email] = hash[:info][:email]
     h[:name] = hash[:info][:name]
-    h[:email_valid] = hash[:extra][:raw_info][:email_verified]
+    h[:email_valid] = extra[:email_verified]
 
     h[:google] = {
       google_user_id: hash[:uid] || extra[:sub],

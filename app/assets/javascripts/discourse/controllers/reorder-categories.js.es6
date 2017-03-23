@@ -1,11 +1,16 @@
+import { ajax } from 'discourse/lib/ajax';
 import ModalFunctionality from 'discourse/mixins/modal-functionality';
 const BufferedProxy = window.BufferedProxy; // import BufferedProxy from 'ember-buffered-proxy/proxy';
-import binarySearch from 'discourse/lib/binary-search';
 import { popupAjaxError } from 'discourse/lib/ajax-error';
-import computed from "ember-addons/ember-computed-decorators";
+import { on, default as computed } from "ember-addons/ember-computed-decorators";
 import Ember from 'ember';
 
 export default Ember.Controller.extend(ModalFunctionality, Ember.Evented, {
+
+  @on('init')
+  _fixOrder() {
+    this.send('fixIndices');
+  },
 
   @computed("site.categories")
   categoriesBuffered(categories) {
@@ -13,54 +18,39 @@ export default Ember.Controller.extend(ModalFunctionality, Ember.Evented, {
     return categories.map(c => bufProxy.create({ content: c }));
   },
 
-  // uses propertyDidChange()
-  @computed('categoriesBuffered')
-  categoriesGrouped(cats) {
-    const map = {};
-    cats.forEach((cat) => {
-      const p = cat.get('position') || 0;
-      if (!map[p]) {
-        map[p] = {pos: p, cats: [cat]};
-      } else {
-        map[p].cats.push(cat);
+  categoriesSorting: ['position'],
+  categoriesOrdered: Ember.computed.sort('categoriesBuffered', 'categoriesSorting'),
+
+  showFixIndices: function() {
+    const cats = this.get('categoriesOrdered');
+    const len = cats.get('length');
+    for (let i = 0; i < len; i++) {
+      if (cats.objectAt(i).get('position') !== i) {
+        return true;
       }
-    });
-    const result = [];
-    Object.keys(map).map(p => parseInt(p)).sort((a,b) => a-b).forEach(function(pos) {
-      result.push(map[pos]);
-    });
-    return result;
-  },
+    }
+    return false;
+  }.property('categoriesOrdered.@each.position'),
 
   showApplyAll: function() {
     let anyChanged = false;
-    this.get('categoriesBuffered').forEach(bc => { anyChanged = anyChanged || bc.get('hasBufferedChanges') });
+    this.get('categoriesBuffered').forEach(bc => { anyChanged = anyChanged || bc.get('hasBufferedChanges'); });
     return anyChanged;
   }.property('categoriesBuffered.@each.hasBufferedChanges'),
 
-  saveDisabled: Ember.computed.alias('showApplyAll'),
+  saveDisabled: Ember.computed.or('showApplyAll', 'showFixIndices'),
 
   moveDir(cat, dir) {
-    const grouped = this.get('categoriesGrouped'),
-      curPos = cat.get('position'),
-      curGroupIdx = binarySearch(grouped, curPos, "pos"),
-      curGroup = grouped[curGroupIdx];
-
-    if (curGroup.cats.length === 1 && ((dir === -1 && curGroupIdx !== 0) || (dir === 1 && curGroupIdx !== (grouped.length - 1)))) {
-      const nextGroup = grouped[curGroupIdx + dir],
-        nextPos = nextGroup.pos;
-      cat.set('position', nextPos);
-    } else {
+    const cats = this.get('categoriesOrdered');
+    const curIdx = cats.indexOf(cat);
+    const desiredIdx = curIdx + dir;
+    if (desiredIdx >= 0 && desiredIdx < cats.get('length')) {
+      const curPos = cat.get('position');
       cat.set('position', curPos + dir);
+      const otherCat = cats.objectAt(desiredIdx);
+      otherCat.set('position', curPos - dir);
+      this.send('commit');
     }
-    cat.applyBufferedChanges();
-    Ember.run.next(this, () => {
-      this.propertyDidChange('categoriesGrouped');
-      Ember.run.schedule('afterRender', this, () => {
-        this.set('scrollIntoViewId', cat.get('id'));
-        this.trigger('scrollIntoView');
-      });
-    });
   },
 
   actions: {
@@ -72,13 +62,22 @@ export default Ember.Controller.extend(ModalFunctionality, Ember.Evented, {
       this.moveDir(cat, 1);
     },
 
+    fixIndices() {
+      const cats = this.get('categoriesOrdered');
+      const len = cats.get('length');
+      for (let i = 0; i < len; i++) {
+        cats.objectAt(i).set('position', i);
+      }
+      this.send('commit');
+    },
+
     commit() {
       this.get('categoriesBuffered').forEach(bc => {
         if (bc.get('hasBufferedChanges')) {
           bc.applyBufferedChanges();
         }
       });
-      this.propertyDidChange('categoriesGrouped');
+      this.propertyDidChange('categoriesBuffered');
     },
 
     saveOrder() {
@@ -86,7 +85,7 @@ export default Ember.Controller.extend(ModalFunctionality, Ember.Evented, {
       this.get('categoriesBuffered').forEach((cat) => {
         data[cat.get('id')] = cat.get('position');
       });
-      Discourse.ajax('/categories/reorder',
+      ajax('/categories/reorder',
         {type: 'POST', data: {mapping: JSON.stringify(data)}}).
         then(() => this.send("closeModal")).
         catch(popupAjaxError);
